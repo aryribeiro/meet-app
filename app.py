@@ -273,7 +273,7 @@ else:
         st.markdown("#### 📹 Seu Vídeo")
         
         webrtc_ctx = webrtc_streamer(
-            key=f"local-{st.session_state.meeting_code}-{'host' if st.session_state.is_host else 'guest'}",
+            key="local_stream",
             mode=WebRtcMode.SENDRECV,
             rtc_configuration=RTC_CONFIGURATION,
             media_stream_constraints={
@@ -310,7 +310,7 @@ else:
         meeting_info = meetings.get(st.session_state.meeting_code, {})
         if meeting_info.get('host') and meeting_info.get('guest'):
             webrtc_remote = webrtc_streamer(
-                key=f"remote-{st.session_state.meeting_code}-{'guest' if st.session_state.is_host else 'host'}",
+                key="remote_stream",
                 mode=WebRtcMode.SENDRECV,
                 rtc_configuration=RTC_CONFIGURATION,
                 media_stream_constraints={
