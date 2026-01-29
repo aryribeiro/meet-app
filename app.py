@@ -16,9 +16,9 @@ def generate_code():
             return code
 
 def create_room():
-    # Jitsi Meet servidor público oficial - sem limites
+    # Jitsi Meet servidor público - sem login, sem limites
     room_name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
-    return f"https://8x8.vc/{room_name}"
+    return f"https://meet.jit.si/MeetApp{room_name}"
 
 @app.route('/')
 def index():
