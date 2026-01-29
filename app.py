@@ -2,6 +2,11 @@ from flask import Flask, render_template, request, jsonify, session
 import string
 import random
 import os
+import requests
+import time
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -15,10 +20,28 @@ def generate_code():
         if code not in meetings:
             return code
 
-def create_room():
-    # Whereby - 45 minutos gratuitos, sem cartão
-    room_name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
-    return f"https://whereby.com/{room_name}"
+def create_daily_room():
+    api_key = os.getenv('DAILY_API_KEY')
+    
+    if not api_key:
+        return {'error': 'API key não configurada'}
+    
+    # Cria sala via API Daily.co
+    response = requests.post(
+        'https://api.daily.co/v1/rooms',
+        headers={'Authorization': f'Bearer {api_key}'},
+        json={
+            'properties': {
+                'exp': int(time.time()) + 3600,  # Expira em 1 hora
+                'max_participants': 2  # Apenas 2 pessoas
+            }
+        }
+    )
+    
+    if response.status_code == 200:
+        return {'url': response.json()['url']}
+    else:
+        return {'error': 'Erro ao criar sala'}
 
 @app.route('/')
 def index():
@@ -38,10 +61,14 @@ def start_meeting():
         return jsonify({'success': False, 'error': 'Não autenticado'}), 401
     
     code = generate_code()
-    room_url = create_room()
-    meetings[code] = {'room_url': room_url}
+    room_result = create_daily_room()
     
-    return jsonify({'success': True, 'code': code, 'room_url': room_url})
+    if 'error' in room_result:
+        return jsonify({'success': False, 'error': room_result['error']}), 500
+    
+    meetings[code] = {'room_url': room_result['url']}
+    
+    return jsonify({'success': True, 'code': code, 'room_url': room_result['url']})
 
 @app.route('/api/join', methods=['POST'])
 def join_meeting():
