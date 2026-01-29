@@ -16,9 +16,9 @@ def generate_code():
             return code
 
 def create_room():
-    # 8x8.vc - servidor oficial Jitsi
+    # Whereby - 45 minutos gratuitos, sem cartão
     room_name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=16))
-    return f"https://8x8.vc/{room_name}"
+    return f"https://whereby.com/{room_name}"
 
 @app.route('/')
 def index():

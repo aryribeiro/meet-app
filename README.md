@@ -1,17 +1,18 @@
 # 📹 Meet! - Aplicativo de Reuniões de Vídeo P2P
 
-Aplicativo web simples para reuniões de vídeo e áudio entre duas pessoas usando Flask e Jitsi Meet.
+Aplicativo web simples para reuniões de vídeo e áudio entre duas pessoas usando Flask e Whereby.
 
 ## 🚀 Características
 
 - ✅ Reuniões de vídeo e áudio em tempo real
-- ✅ 100% gratuito - sem cartão de crédito
+- ✅ 45 minutos gratuitos por reunião
+- ✅ Sem cartão de crédito necessário
 - ✅ Funciona perfeitamente em produção (Vercel)
 - ✅ Suporte completo para desktop e mobile
 - ✅ Autenticação com senha para administradores
 - ✅ Código único de reunião (8 caracteres)
 - ✅ Interface limpa e intuitiva em português
-- ✅ Powered by Jitsi Meet (open source)
+- ✅ Powered by Whereby
 
 ## 📋 Pré-requisitos
 
@@ -112,7 +113,7 @@ meet-app/
 ## ⚙️ Tecnologias
 
 - **Flask 3.0** - Framework web Python
-- **Jitsi Meet** - Plataforma de vídeo conferência open source
+- **Whereby** - Plataforma de vídeo conferência (45 min gratuitos)
 - **Vercel** - Hospedagem serverless
 - **Python 3.8+** - Linguagem de programação
 
@@ -145,6 +146,7 @@ meet-app/
 
 ## 📝 Limitações
 
+- 45 minutos por reunião (limite do Whereby gratuito)
 - Códigos armazenados em memória (não persistem entre deploys)
 - Salas temporárias (não há histórico)
 
@@ -170,15 +172,15 @@ Este projeto é fornecido como está, para fins educacionais e de demonstração
 Para problemas ou dúvidas:
 1. Verifique a seção de Troubleshooting
 2. Consulte a documentação do [Flask](https://flask.palletsprojects.com)
-3. Consulte a documentação do [Jitsi Meet](https://jitsi.github.io/handbook/)
+3. Consulte a documentação do [Whereby](https://whereby.com)
 4. Consulte a documentação do [Vercel](https://vercel.com/docs)
 
 ## 🙏 Agradecimentos
 
 - [Flask](https://flask.palletsprojects.com) - Framework web Python
-- [Jitsi Meet](https://jitsi.org) - Plataforma de vídeo conferência open source
+- [Whereby](https://whereby.com) - Plataforma de vídeo conferência
 - [Vercel](https://vercel.com) - Hospedagem serverless
 
 ---
 
-**Desenvolvido com ❤️ usando Flask e Jitsi Meet**
+**Desenvolvido com ❤️ usando Flask e Whereby**
