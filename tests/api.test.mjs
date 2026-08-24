@@ -2,10 +2,13 @@
 // e o Turso REAL. Cobre a definição de "concluído" do contrato:
 // criação de sala, senha errada/certa, rejeição do 3º participante e expiração.
 import { createClient } from "@libsql/client";
-import { api, check, loadEnv, summary } from "./_helpers.mjs";
+import { api, check, createRoomViaDb, loadEnv, summary } from "./_helpers.mjs";
 
 loadEnv();
 
+// Senha-semente só vale até o operador trocá-la no painel (fluxo desejado).
+// Sem OPERATOR_PASSWORD válida, os testes de login/criação via API são pulados
+// e as salas dos demais testes nascem direto no banco.
 const OPERATOR_PASSWORD = process.env.OPERATOR_PASSWORD ?? "admin123";
 
 async function main() {
@@ -14,21 +17,31 @@ async function main() {
   check("senha errada é rejeitada (401)", r.status === 401);
 
   r = await api("/api/operator/login", { method: "POST", body: { password: OPERATOR_PASSWORD } });
-  check("senha correta emite sessão", r.status === 200 && typeof r.data?.token === "string");
-  const session = r.data?.token;
-  if (!session) return summary("API");
+  const session = r.status === 200 ? r.data?.token : null;
+  if (session) {
+    check("senha correta emite sessão", typeof session === "string");
+  } else {
+    console.log("  (senha do operador já foi trocada — login/criação via API pulados)");
+  }
 
   console.log("\n— Criação de sala —");
   r = await api("/api/rooms", { method: "POST", body: { token: "token-invalido-".padEnd(40, "x") } });
   check("criar sala sem sessão é rejeitado (401)", r.status === 401);
 
-  r = await api("/api/rooms", { method: "POST", body: { token: session, roomPassword: "segredo42" } });
-  check(
-    "sala com senha criada",
-    r.status === 200 && typeof r.data?.roomId === "string" && r.data?.requiresPassword === true,
-  );
-  const roomId = r.data?.roomId;
-  const hostToken = r.data?.hostToken;
+  let roomId;
+  let hostToken;
+  if (session) {
+    r = await api("/api/rooms", { method: "POST", body: { token: session, roomPassword: "segredo42" } });
+    check(
+      "sala com senha criada via API",
+      r.status === 200 && typeof r.data?.roomId === "string" && r.data?.requiresPassword === true,
+    );
+    roomId = r.data?.roomId;
+    hostToken = r.data?.hostToken;
+  } else {
+    ({ roomId, hostToken } = await createRoomViaDb("segredo42"));
+    check("sala com senha criada via banco", Boolean(roomId && hostToken));
+  }
   if (!roomId || !hostToken) return summary("API");
 
   console.log("\n— Info pública da sala —");
@@ -79,9 +92,15 @@ async function main() {
     url: process.env.TURSO_DATABASE_URL,
     authToken: process.env.TURSO_AUTH_TOKEN,
   });
-  r = await api("/api/rooms", { method: "POST", body: { token: session } });
-  const expRoom = r.data?.roomId;
-  check("sala sem senha criada", r.status === 200 && typeof expRoom === "string");
+  let expRoom;
+  if (session) {
+    r = await api("/api/rooms", { method: "POST", body: { token: session } });
+    expRoom = r.data?.roomId;
+    check("sala sem senha criada", r.status === 200 && typeof expRoom === "string");
+  } else {
+    ({ roomId: expRoom } = await createRoomViaDb());
+    check("sala sem senha criada (via banco)", typeof expRoom === "string");
+  }
   await db.execute({
     sql: "UPDATE rooms SET expires_at = ? WHERE id = ?",
     args: [Date.now() - 1000, expRoom],

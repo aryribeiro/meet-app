@@ -1,10 +1,9 @@
 // Simula DOIS peers trocando offer/answer/ICE pelas rotas REAIS (Turso real).
 // É a prova exigida pelo contrato: se o SDP atravessar em poucos segundos,
 // a arquitetura de sinalização por polling vive.
-import { api, check, loadEnv, summary } from "../tests/_helpers.mjs";
+import { api, check, createRoomViaDb, loadEnv, summary } from "../tests/_helpers.mjs";
 
 loadEnv();
-const OPERATOR_PASSWORD = process.env.OPERATOR_PASSWORD ?? "admin123";
 const POLL_MS = 1000;
 const FAKE_SDP_OFFER = "v=0\r\no=- 46117 2 IN IP4 127.0.0.1\r\n" + "a=fake-offer ".repeat(200);
 const FAKE_SDP_ANSWER = "v=0\r\no=- 46118 2 IN IP4 127.0.0.1\r\n" + "a=fake-answer ".repeat(200);
@@ -28,14 +27,9 @@ async function pollUntil(roomId, token, after, predicate, timeoutMs = 15000) {
 }
 
 async function main() {
-  let r = await api("/api/operator/login", { method: "POST", body: { password: OPERATOR_PASSWORD } });
-  const session = r.data?.token;
-  check("login do operador", Boolean(session));
-
-  r = await api("/api/rooms", { method: "POST", body: { token: session } });
-  const roomId = r.data?.roomId;
-  const hostToken = r.data?.hostToken;
+  const { roomId, hostToken } = await createRoomViaDb();
   check("sala criada", Boolean(roomId && hostToken));
+  let r;
 
   r = await api(`/api/rooms/${roomId}/join`, { method: "POST", body: {} });
   const guestToken = r.data?.guestToken;

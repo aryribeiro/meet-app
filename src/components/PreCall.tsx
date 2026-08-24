@@ -37,6 +37,9 @@ export function PreCall({
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [joining, setJoining] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // Fluxo entregue à chamada: a limpeza do unmount NÃO pode pará-lo — foi o bug
+  // da "câmera preta" (preview ok, chamada com tracks já encerrados).
+  const handedOffRef = useRef<MediaStream | null>(null);
 
   // Captura o preview conforme o modo escolhido; tracks antigos são parados
   // (câmera desliga de verdade quando o modo é "só voz").
@@ -67,7 +70,10 @@ export function PreCall({
       });
     return () => {
       cancelled = true;
-      if (current) for (const t of current.getTracks()) t.stop();
+      // Só desliga a câmera/mic se o fluxo NÃO foi entregue à chamada.
+      if (current && current !== handedOffRef.current) {
+        for (const t of current.getTracks()) t.stop();
+      }
     };
   }, [withVideo]);
 
@@ -77,6 +83,8 @@ export function PreCall({
 
   useEffect(() => {
     if (joining) setJoining(false);
+    // Entrada recusada: o fluxo continua conosco — a limpeza volta a ser nossa.
+    handedOffRef.current = null;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reabilita o botão quando o servidor recusa
   }, [errorMessage]);
 
@@ -214,6 +222,7 @@ export function PreCall({
         onClick={() => {
           if (!stream) return;
           setJoining(true);
+          handedOffRef.current = stream;
           onJoin({ name: name.trim(), photo, stream, withVideo, password, relayOnly });
         }}
         className="w-full rounded-lg bg-[color:var(--color-brand)] py-3 text-lg font-semibold text-white transition hover:brightness-110 disabled:opacity-40"

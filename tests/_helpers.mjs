@@ -1,5 +1,7 @@
+import { pbkdf2Sync, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createClient } from "@libsql/client";
 
 /** Carrega .env da raiz para process.env (sem dependência de dotenv). */
 export function loadEnv() {
@@ -36,6 +38,37 @@ export function check(name, condition, extra = "") {
 export function summary(title) {
   console.log(`\n${title}: ${passed} ok, ${failed} falhas`);
   if (failed > 0) process.exit(1);
+}
+
+/**
+ * Cria uma sala DIRETO no Turso (credenciais do .env): os testes de chamada não
+ * dependem da senha do operador, que o dono do app troca no primeiro uso.
+ */
+export async function createRoomViaDb(roomPassword = null) {
+  const db = createClient({
+    url: process.env.TURSO_DATABASE_URL,
+    authToken: process.env.TURSO_AUTH_TOKEN,
+  });
+  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+  let roomId = "";
+  for (const b of randomBytes(10)) roomId += alphabet[b % alphabet.length];
+  const hostToken = randomBytes(32).toString("hex");
+  const now = Date.now();
+  // Mesmo formato do servidor: PBKDF2-SHA256, 100k iterações, salt/hash em hex.
+  let hash = null;
+  let salt = null;
+  if (roomPassword) {
+    salt = randomBytes(16).toString("hex");
+    hash = pbkdf2Sync(roomPassword, Buffer.from(salt, "hex"), 100_000, 32, "sha256").toString("hex");
+  }
+  await db.execute({
+    sql: `INSERT INTO rooms (id, password_hash, password_salt, host_token, guest_token,
+            status, created_at, last_activity, expires_at)
+          VALUES (?, ?, ?, ?, NULL, 'open', ?, ?, ?)`,
+    args: [roomId, hash, salt, hostToken, now, now, now + 15 * 60 * 1000],
+  });
+  db.close();
+  return { roomId, hostToken };
 }
 
 export async function api(path, { method = "GET", body } = {}) {

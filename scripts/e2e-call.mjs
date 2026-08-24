@@ -2,11 +2,10 @@
 // anfitrião + convidado, conexão P2P de verdade, comparação dos códigos SAS dos
 // dois lados, mute e encerramento. Valida o que o teste de API não alcança.
 import { chromium } from "playwright";
-import { api, check, loadEnv, summary } from "../tests/_helpers.mjs";
+import { api, check, createRoomViaDb, loadEnv, summary } from "../tests/_helpers.mjs";
 
 loadEnv();
 const BASE = process.env.BASE_URL ?? "http://localhost:3000";
-const OPERATOR_PASSWORD = process.env.OPERATOR_PASSWORD ?? "admin123";
 
 async function joinAs(page, url, name) {
   await page.goto(url);
@@ -33,12 +32,9 @@ async function readSas(page) {
 }
 
 async function main() {
-  // Sala criada via API (o painel tem seu próprio teste de API).
-  let r = await api("/api/operator/login", { method: "POST", body: { password: OPERATOR_PASSWORD } });
-  const session = r.data?.token;
-  r = await api("/api/rooms", { method: "POST", body: { token: session } });
-  const { roomId, hostToken } = r.data ?? {};
+  const { roomId, hostToken } = await createRoomViaDb();
   check("sala criada para o e2e", Boolean(roomId && hostToken));
+  let r;
 
   const browser = await chromium.launch({
     args: [
@@ -65,6 +61,28 @@ async function main() {
     console.log(`  SAS anfitrião: ${sasHost} | SAS convidado: ${sasGuest}`);
     check("conexão P2P estabeleceu (SAS visível nos dois lados)", Boolean(sasHost && sasGuest));
     check("códigos SAS IGUAIS nos dois lados (ordem canônica ok)", sasHost === sasGuest);
+
+    // VÍDEO DE VERDADE fluindo (pega o bug do track parado na pré-chamada):
+    // todo <video> da tela precisa ter dimensões reais e o relógio andando.
+    async function videosAlive(page) {
+      return page.evaluate(async () => {
+        const vids = [...document.querySelectorAll("video")];
+        const before = vids.map((v) => v.currentTime);
+        await new Promise((r) => setTimeout(r, 1500));
+        return vids.map((v, i) => ({
+          width: v.videoWidth,
+          advancing: v.currentTime > before[i],
+        }));
+      });
+    }
+    for (const [who, page] of [["anfitrião", host], ["convidado", guest]]) {
+      const vids = await videosAlive(page);
+      check(
+        `${who}: ${vids.length} vídeos com pixels reais e reproduzindo`,
+        vids.length === 2 && vids.every((v) => v.width > 0 && v.advancing),
+        JSON.stringify(vids),
+      );
+    }
 
     // Perfis trafegaram pelo DataChannel.
     await guest.getByText("Ana", { exact: false }).first().waitFor({ timeout: 15000 });
