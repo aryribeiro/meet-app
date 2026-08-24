@@ -1,5 +1,13 @@
-import { db, touchRoom } from "@/lib/server/db";
-import { authRoom, badRequest, json, prepare, readBody, unauthorized } from "@/lib/server/http";
+import { db } from "@/lib/server/db";
+import {
+  authRoom,
+  badRequest,
+  json,
+  prepareLight,
+  readBody,
+  unauthorized,
+} from "@/lib/server/http";
+import { ROOM_INACTIVITY_MS } from "@/lib/shared/constants";
 
 export const runtime = "nodejs";
 
@@ -14,7 +22,7 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  await prepare();
+  await prepareLight();
   const { id } = await ctx.params;
   const body = await readBody(req);
   const auth = await authRoom(id, body["token"]);
@@ -26,11 +34,21 @@ export async function POST(
   }
   if (payload.length > MAX_PAYLOAD_BYTES) return badRequest("Payload grande demais.");
 
-  await db().execute({
-    sql: `INSERT INTO signals (room_id, sender, payload, created_at) VALUES (?, ?, ?, ?)`,
-    args: [id, auth.role, payload, Date.now()],
-  });
-  await touchRoom(id);
+  // INSERT + renovação da expiração numa viagem só (batch).
+  const now = Date.now();
+  await db().batch(
+    [
+      {
+        sql: `INSERT INTO signals (room_id, sender, payload, created_at) VALUES (?, ?, ?, ?)`,
+        args: [id, auth.role, payload, now],
+      },
+      {
+        sql: `UPDATE rooms SET last_activity = ?, expires_at = ? WHERE id = ? AND status = 'open'`,
+        args: [now, now + ROOM_INACTIVITY_MS, id],
+      },
+    ],
+    "write",
+  );
   return json({ ok: true });
 }
 
@@ -44,7 +62,7 @@ export async function GET(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<Response> {
-  await prepare();
+  await prepareLight();
   const { id } = await ctx.params;
   const url = new URL(req.url);
   const token = url.searchParams.get("token");
@@ -56,29 +74,37 @@ export async function GET(
   if (!auth) return unauthorized();
   const other = auth.role === "host" ? "guest" : "host";
 
-  const c = db();
-  // Ack: apaga o que o chamador já leu (linhas do outro peer até o cursor).
-  await c.execute({
-    sql: `DELETE FROM signals WHERE room_id = ? AND sender = ? AND seq <= ?`,
-    args: [id, other, after],
-  });
-  const res = await c.execute({
-    sql: `SELECT seq, payload FROM signals
-          WHERE room_id = ? AND sender = ? AND seq > ?
-          ORDER BY seq ASC LIMIT 50`,
-    args: [id, other, after],
-  });
-  await touchRoom(id);
+  // Caminho mais quente do app (1 req/s por peer): ack + leitura + renovação de
+  // expiração + peerJoined numa ÚNICA viagem ao Turso (batch), na ordem certa.
+  const now = Date.now();
+  const [, msgsRes, , roomRes] = await db().batch(
+    [
+      {
+        sql: `DELETE FROM signals WHERE room_id = ? AND sender = ? AND seq <= ?`,
+        args: [id, other, after],
+      },
+      {
+        sql: `SELECT seq, payload FROM signals
+              WHERE room_id = ? AND sender = ? AND seq > ?
+              ORDER BY seq ASC LIMIT 50`,
+        args: [id, other, after],
+      },
+      {
+        sql: `UPDATE rooms SET last_activity = ?, expires_at = ? WHERE id = ? AND status = 'open'`,
+        args: [now, now + ROOM_INACTIVITY_MS, id],
+      },
+      { sql: `SELECT guest_token FROM rooms WHERE id = ?`, args: [id] },
+    ],
+    "write",
+  );
 
-  // peerJoined: o anfitrião usa isso para sair do estado "aguardando participante".
-  const roomRes = await c.execute({
-    sql: `SELECT guest_token FROM rooms WHERE id = ?`,
-    args: [id],
-  });
-  const peerJoined = roomRes.rows[0] ? roomRes.rows[0]["guest_token"] !== null : false;
+  const peerJoined = roomRes?.rows[0] ? roomRes.rows[0]["guest_token"] !== null : false;
 
   return json({
-    messages: res.rows.map((r) => ({ seq: Number(r["seq"]), payload: String(r["payload"]) })),
+    messages: (msgsRes?.rows ?? []).map((r) => ({
+      seq: Number(r["seq"]),
+      payload: String(r["payload"]),
+    })),
     peerJoined,
   });
 }

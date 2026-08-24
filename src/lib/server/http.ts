@@ -27,6 +27,17 @@ export async function prepare(): Promise<void> {
   await lazyCleanup();
 }
 
+/**
+ * Prólogo das rotas de POLLING (chamadas a cada ~1 s): a limpeza lazy roda por
+ * amostragem (~20%) — continua acontecendo em segundos, mas corta a maioria das
+ * viagens extras ao Turso no caminho mais quente do app. A correção não depende
+ * dela: authRoom confere expiração na própria leitura.
+ */
+export async function prepareLight(): Promise<void> {
+  await ensureSchema();
+  if (Math.random() < 0.2) await lazyCleanup();
+}
+
 /** Lê o corpo JSON com tolerância a corpo vazio/inválido. */
 export async function readBody(req: Request): Promise<Record<string, unknown>> {
   try {

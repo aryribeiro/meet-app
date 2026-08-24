@@ -29,6 +29,9 @@ export class SignalingChannel {
   private polling = false;
   private closed = false;
   private startedAt = Date.now();
+  // Backoff exponencial em falha de rede/servidor: 1s → 2s → 4s → 8s (teto),
+  // com jitter para dessincronizar os dois peers; volta a 1s no primeiro sucesso.
+  private delay = POLL_INTERVAL_MS;
   private readonly opts: SignalingOptions;
 
   constructor(opts: SignalingOptions) {
@@ -54,6 +57,7 @@ export class SignalingChannel {
     if (this.closed || this.polling) return;
     this.polling = true;
     this.startedAt = Date.now();
+    this.delay = POLL_INTERVAL_MS; // ciclo novo começa sem backoff acumulado
     void this.loop();
   }
 
@@ -93,6 +97,7 @@ export class SignalingChannel {
         return;
       }
       if (res.ok) {
+        this.delay = POLL_INTERVAL_MS; // sucesso zera o backoff
         const data: unknown = await res.json();
         const { messages, peerJoined } = data as {
           messages: Array<{ seq: number; payload: string }>;
@@ -107,12 +112,17 @@ export class SignalingChannel {
             // Payload malformado de peer com versão diferente: ignora, nunca derruba.
           }
         }
+      } else {
+        // 5xx/429: recua para não martelar o servidor.
+        this.delay = Math.min(this.delay * 2, 8000);
       }
     } catch {
-      // Rede oscilou: mantém o ritmo e tenta no próximo tique.
+      // Rede oscilou: recua e tenta de novo.
+      this.delay = Math.min(this.delay * 2, 8000);
     }
     if (this.polling && !this.closed) {
-      this.timer = setTimeout(() => void this.loop(), POLL_INTERVAL_MS);
+      const jitter = Math.floor(Math.random() * 300);
+      this.timer = setTimeout(() => void this.loop(), this.delay + jitter);
     }
   }
 }
