@@ -16,7 +16,10 @@ export type CallState =
   | "reconnecting"
   | "ended"
   | "timeout"
-  | "expired";
+  | "expired"
+  // A rede bloqueou o caminho direto (CGNAT/VPN/firewall) e não há TURN que
+  // salve — estado terminal com explicação honesta, nunca "reconectando" eterno.
+  | "p2p-failed";
 
 export interface RemoteProfile {
   name: string;
@@ -83,6 +86,11 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
   // camOn "desejado pelo usuário" — o fallback de qualidade não sobrescreve a intenção.
   const wantCamRef = useRef(args.startWithVideo);
   const endedRef = useRef(false);
+  // Já conectou alguma vez? Falha antes da 1ª conexão = rede bloqueando (fatal);
+  // falha depois = oscilação (tenta ICE restart).
+  const everConnectedRef = useRef(false);
+  const failCountRef = useRef(0);
+  const hardFailedRef = useRef(false);
 
   const sendMediaState = useCallback(() => {
     const pc = pcRef.current;
@@ -109,11 +117,25 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     });
     pcRef.current = pc;
 
+    // Watchdog do primeiro handshake: peer entrou e a conexão P2P não fechou em
+    // 75 s → rede bloqueando (CGNAT/VPN). Vira estado terminal explicado.
+    let connectWatchdog: ReturnType<typeof setTimeout> | null = null;
+
     const signaling = new SignalingChannel({
       roomId: args.roomId,
       token: args.token,
       onPeerJoined: () => {
-        if (!disposed) setState((s) => (s === "waiting" ? "connecting" : s));
+        if (disposed) return;
+        setState((s) => (s === "waiting" ? "connecting" : s));
+        if (!connectWatchdog && !everConnectedRef.current) {
+          connectWatchdog = setTimeout(() => {
+            if (!disposed && !everConnectedRef.current && !endedRef.current) {
+              hardFailedRef.current = true;
+              setState("p2p-failed");
+              signaling.close();
+            }
+          }, 75_000);
+        }
       },
       onDead: (reason) => {
         if (!disposed) setState(reason === "timeout" ? "timeout" : "expired");
@@ -187,7 +209,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     };
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === "failed") {
+      if (pc.iceConnectionState === "failed" && !hardFailedRef.current) {
         // ICE restart automático (contrato) — reabre polling para os novos candidates.
         signaling.wake();
         pc.restartIce();
@@ -198,6 +220,12 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       if (disposed) return;
       switch (pc.connectionState) {
         case "connected": {
+          everConnectedRef.current = true;
+          failCountRef.current = 0;
+          if (connectWatchdog) {
+            clearTimeout(connectWatchdog);
+            connectWatchdog = null;
+          }
           setState("connected");
           // Polling DORME: economiza invocações (contrato). Reacorda só em renegociação.
           signaling.sleep();
@@ -217,6 +245,15 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
           setState("reconnecting");
           break;
         case "failed":
+          failCountRef.current += 1;
+          // Nunca conectou e já falhou 2x: a rede está bloqueando o caminho
+          // direto — parar de fingir que "reconectando" vai resolver.
+          if (!everConnectedRef.current && failCountRef.current >= 2) {
+            hardFailedRef.current = true;
+            setState("p2p-failed");
+            signaling.close();
+            break;
+          }
           setState("reconnecting");
           signaling.wake();
           pc.restartIce();
@@ -287,7 +324,11 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     signaling.wake();
 
     // Fechar a aba = sair da reunião (o link é efêmero por contrato).
-    const onPageHide = () => {
+    // persisted=true significa "página indo para o cache de navegação" — no
+    // celular isso dispara ao trocar de app/apagar a tela; NÃO é sair da
+    // reunião, então não derrubamos a sala nesses casos.
+    const onPageHide = (ev: PageTransitionEvent) => {
+      if (ev.persisted) return;
       channel.send("bye", {});
       void signaling.post({ kind: "bye" });
       void endRoom(args.roomId, args.token);
@@ -296,6 +337,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
 
     return () => {
       disposed = true;
+      if (connectWatchdog) clearTimeout(connectWatchdog);
       window.removeEventListener("pagehide", onPageHide);
       monitor.stop();
       signaling.close();

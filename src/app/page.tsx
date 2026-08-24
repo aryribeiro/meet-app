@@ -7,10 +7,10 @@ export default function HomePage() {
     <main className="flex min-h-screen flex-col">
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center gap-10 px-6 py-16 text-center">
         <div className="space-y-4">
+          <h1 className="text-5xl font-bold tracking-tight">🎥 Meet App!</h1>
           <p className="text-sm font-semibold uppercase tracking-widest text-[color:var(--color-brand)]">
-            conversas só entre vocês dois
+            Conversa Privada a Dois
           </p>
-          <h1 className="text-5xl font-bold tracking-tight">Meet App!</h1>
           <p className="mx-auto max-w-xl text-lg text-[color:var(--color-ink-dim)]">
             Chamadas de vídeo e voz entre duas pessoas, com privacidade de verdade: a
             conversa vai direto de um aparelho ao outro, sem passar por servidores no

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Meet App! — chamadas de vídeo privadas",
+  title: "🎥 Meet App! — chamadas de vídeo privadas",
   description:
     "Chamadas de vídeo e voz entre duas pessoas, com privacidade de verdade: a conversa vai direto de um aparelho ao outro, sem passar por servidores.",
   robots: { index: true, follow: true },

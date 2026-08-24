@@ -16,4 +16,7 @@ next-env.d.ts
 # sistema
 .DS_Store
 Thumbs.db
+
+# logs de diagnóstico salvos do browser
+*.log
 .vercel

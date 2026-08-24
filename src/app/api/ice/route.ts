@@ -14,12 +14,18 @@ export async function GET(): Promise<Response> {
     { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
   ];
 
+  // TURN_URL aceita várias URLs separadas por vírgula (provedores entregam
+  // variantes 80/443/tcp/tls — quanto mais caminhos, mais redes hostis passam).
   const turnUrl = process.env.TURN_URL;
   const turnUser = process.env.TURN_USERNAME;
   const turnCred = process.env.TURN_CREDENTIAL;
   const relayAvailable = Boolean(turnUrl && turnUser && turnCred);
   if (turnUrl && turnUser && turnCred) {
-    iceServers.push({ urls: turnUrl, username: turnUser, credential: turnCred });
+    const urls = turnUrl
+      .split(",")
+      .map((u) => u.trim())
+      .filter(Boolean);
+    iceServers.push({ urls, username: turnUser, credential: turnCred });
   }
 
   return json({ iceServers, relayAvailable });

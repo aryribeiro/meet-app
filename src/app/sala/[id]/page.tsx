@@ -97,6 +97,32 @@ function ActiveCall({ roomId, session }: { roomId: string; session: JoinedSessio
       />
     );
   }
+  if (call.state === "p2p-failed") {
+    return (
+      <main className="flex min-h-dvh items-center justify-center p-6">
+        <div className="w-full max-w-md space-y-4 rounded-2xl border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-8 text-center">
+          <h1 className="text-2xl font-bold">Não conseguimos conectar vocês</h1>
+          <p className="text-[color:var(--color-ink-dim)]">
+            A internet de um dos dois está bloqueando a conexão direta — isso é comum em
+            internet de celular (4G/5G), VPNs e redes de empresa. Não é culpa sua, nem do
+            seu aparelho.
+          </p>
+          <p className="text-sm text-[color:var(--color-ink-dim)]">
+            Vale tentar: desligar VPN, trocar o celular para o wi-fi (ou vice-versa) e
+            tentar de novo. Se acontecer sempre, o administrador do serviço precisa ativar
+            o modo de retransmissão.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="inline-block rounded-lg bg-[color:var(--color-brand)] px-5 py-2 font-semibold text-white"
+          >
+            Tentar de novo
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <CallScreen
@@ -153,6 +179,33 @@ export default function RoomPage({ params }: { params: Promise<{ id: string }> }
         return;
       }
 
+      // Reentrada do convidado (ex.: recarregou após falha de conexão): a vaga
+      // já é dele — reusa o token salvo em vez de disputar a vaga de novo.
+      try {
+        const saved = sessionStorage.getItem(`meet-guest-${id}`);
+        if (saved) {
+          const probe = await fetch(
+            `/api/rooms/${id}/signal?token=${saved}&after=0`,
+            { cache: "no-store" },
+          );
+          if (probe.ok) {
+            setState({
+              phase: "call",
+              session: {
+                role: "guest",
+                token: saved,
+                profile: result,
+                iceServers: iceData.iceServers,
+              },
+            });
+            return;
+          }
+          sessionStorage.removeItem(`meet-guest-${id}`);
+        }
+      } catch {
+        // sem storage — segue o fluxo normal
+      }
+
       const res = await fetch(`/api/rooms/${id}/join`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -168,6 +221,11 @@ export default function RoomPage({ params }: { params: Promise<{ id: string }> }
             : prev,
         );
         return;
+      }
+      try {
+        sessionStorage.setItem(`meet-guest-${id}`, data.guestToken);
+      } catch {
+        // sem storage — reentrada não estará disponível
       }
       setState({
         phase: "call",

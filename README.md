@@ -53,11 +53,26 @@ O schema é criado automaticamente na primeira requisição; a senha inicial do 
    "esconder meu endereço" não aparece na UI).
 3. `git push` → deploy. Depois: `npm run smoke:prod`.
 
-### TURN próprio (opcional)
+### TURN (necessário para 4G/5G/CGNAT e VPN)
 
-Não existe TURN gratuito confiável. Para o modo relay-only, suba um
-[coturn](https://github.com/coturn/coturn) num VPS barato:
-`turnserver -a -u usuario:senha -r meet` e configure as `TURN_*` acima.
+Sem TURN, chamadas entre certas redes (internet móvel com CGNAT, VPNs, redes
+corporativas) **não conectam** — o app mostra a tela "Não conseguimos conectar
+vocês". O relay só transporta tráfego cifrado: a criptografia ponta a ponta
+continua intacta. Opções:
+
+1. **Metered.ca (grátis, ~0,5 GB/mês):** crie uma conta em
+   [metered.ca/stun-turn](https://www.metered.ca/stun-turn), copie as credenciais
+   do painel e configure (múltiplas URLs separadas por vírgula):
+   ```
+   TURN_URL=turn:standard.relay.metered.ca:80,turn:standard.relay.metered.ca:443,turns:standard.relay.metered.ca:443?transport=tcp
+   TURN_USERNAME=<username do painel>
+   TURN_CREDENTIAL=<credential do painel>
+   ```
+2. **coturn num VPS próprio** (~US$ 4–5/mês): `turnserver -a -u usuario:senha -r meet`.
+
+Valide com `node scripts/turn-check.mjs` (deve listar relay candidates) e depois
+configure as mesmas variáveis na Vercel. O toggle "esconder meu endereço" passa a
+aparecer na entrada automaticamente.
 
 ## Checklist manual (o que máquina não valida)
 
