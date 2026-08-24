@@ -18,6 +18,7 @@ function MediaTile({
   muted,
   micOff,
   label,
+  tile,
   refreshKey = 0,
 }: {
   stream: MediaStream | null;
@@ -28,6 +29,8 @@ function MediaTile({
   muted: boolean;
   micOff: boolean;
   label: string;
+  /** Marcador estável p/ testes: qual tela é esta. */
+  tile: "local" | "remote";
   /** Troca de dispositivo muda os tracks do MESMO MediaStream — o srcObject
    *  precisa ser reatribuído para o elemento enxergar o track novo. */
   refreshKey?: number;
@@ -38,7 +41,7 @@ function MediaTile({
   }, [stream, refreshKey]);
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-xl bg-black">
+    <div data-tile={tile} className="relative h-full w-full overflow-hidden rounded-xl bg-black">
       {/* O elemento de vídeo fica sempre montado: é ele que TOCA O ÁUDIO.
           Quando o vídeo cai/desliga, escondemos a imagem e mostramos a foto. */}
       <video
@@ -215,6 +218,7 @@ export function CallScreen({
             muted={!call.speakerOn}
             micOff={!call.remoteMedia.micOn}
             label={call.remoteProfile.name}
+            tile="remote"
           />
         )}
 
@@ -229,6 +233,7 @@ export function CallScreen({
             muted
             micOff={!call.micOn}
             label="Você"
+            tile="local"
             refreshKey={call.streamEpoch}
           />
         </div>
