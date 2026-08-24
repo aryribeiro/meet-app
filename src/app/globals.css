@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #e8ecf1;
+  --color-ink-dim: #9aa7b5;
+  --color-bg: #0b1017;
+  --color-panel: #121a24;
+  --color-panel-2: #1a2432;
+  --color-line: #24303f;
+  --color-brand: #4f8cff;
+  --color-brand-soft: #1d3a6b;
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-danger: #f87171;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Vídeo espelhado só para a própria câmera (como o usuário se vê no espelho). */
+.mirror {
+  transform: scaleX(-1);
+}

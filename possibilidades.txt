@@ -1,0 +1,35 @@
+Lista de possíveis otimizações para um web app, no geral...
+
+1. Pooling de conexões SQLite
+   * Reutilizar conexões em vez de criar novas
+   * Reduzir overhead de I/O
+2. Cache inteligente
+   * Cache com TTL
+   * Cache do status da sessão
+   * Evitar queries desnecessárias
+3. Lazy loading
+   * Carregar dados apenas quando necessário
+   * Reduzir consultas na sidebar
+4. Otimização de queries
+   * Índices no banco SQLite
+   * Queries mais eficientes
+   * Prepared statements
+5. Redução de reruns
+   * Minimizar st.rerun() desnecessários
+   * Estados mais eficientes
+6. Compactação de dados
+   * Reduzir tamanho dos objetos em session_state
+   * Cleanup automático de estados antigos
+7. WAL mode no SQLite
+   * Permite leituras concorrentes
+   * Melhor performance com múltiplos usuários
+8. Debouncing de atualizações
+   * Evitar spam de atualizações
+9. Cache na memória, jitter, backoff exponencial e fallback.
+
+Estimativa pós-otimização:
+* 300 a 400 usuários simultâneos
+* Melhor responsividade geral
+* Menor uso de memória
+
+SE possível, implemente essas otimizações acima em meu web app. faça isso mantendo toda a funcionalidade atual sem danificar nada, atuando de forma profissional e sênior.

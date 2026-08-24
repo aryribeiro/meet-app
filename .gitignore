@@ -1,0 +1,18 @@
+# deps / build
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# credenciais — nunca versionar
+.env
+.env.*
+!.env.example
+
+# vercel
+.vercel/
+
+# sistema
+.DS_Store
+Thumbs.db
