@@ -14,7 +14,11 @@ export function loadEnv() {
   }
 }
 
-export const BASE = process.env.BASE_URL ?? "http://localhost:3000";
+// Resolvida a CADA chamada (não no import): o smoke de produção define
+// process.env.BASE_URL depois de importar este módulo.
+export function base() {
+  return process.env.BASE_URL ?? "http://localhost:3000";
+}
 
 let passed = 0;
 let failed = 0;
@@ -35,7 +39,7 @@ export function summary(title) {
 }
 
 export async function api(path, { method = "GET", body } = {}) {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${base()}${path}`, {
     method,
     headers: body ? { "content-type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
