@@ -5,7 +5,9 @@
 // painéis, não como reescrita).
 import { useEffect, useRef, useState } from "react";
 import type { UseWebRTCCallResult } from "@/lib/client/useWebRTCCall";
+import { listDevices, type MediaDeviceOption } from "@/lib/client/media";
 import { Avatar } from "./Avatar";
+import { DevicePicker } from "./DevicePicker";
 
 function MediaTile({
   stream,
@@ -16,6 +18,7 @@ function MediaTile({
   muted,
   micOff,
   label,
+  refreshKey = 0,
 }: {
   stream: MediaStream | null;
   showVideo: boolean;
@@ -25,11 +28,14 @@ function MediaTile({
   muted: boolean;
   micOff: boolean;
   label: string;
+  /** Troca de dispositivo muda os tracks do MESMO MediaStream — o srcObject
+   *  precisa ser reatribuído para o elemento enxergar o track novo. */
+  refreshKey?: number;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
     if (videoRef.current && stream) videoRef.current.srcObject = stream;
-  }, [stream]);
+  }, [stream, refreshKey]);
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-xl bg-black">
@@ -102,7 +108,31 @@ export function CallScreen({
 }) {
   const [sasDismissed, setSasDismissed] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [devices, setDevices] = useState<{ cams: MediaDeviceOption[]; mics: MediaDeviceOption[] }>(
+    { cams: [], mics: [] },
+  );
   const waiting = call.state === "waiting" || call.state === "connecting";
+
+  // Painel de dispositivos: enumera ao abrir e acompanha plugar/desplugar.
+  useEffect(() => {
+    if (!showSettings) return;
+    let live = true;
+    const refresh = () => {
+      void listDevices().then((d) => {
+        if (live) setDevices(d);
+      });
+    };
+    refresh();
+    navigator.mediaDevices.addEventListener("devicechange", refresh);
+    return () => {
+      live = false;
+      navigator.mediaDevices.removeEventListener("devicechange", refresh);
+    };
+  }, [showSettings]);
+
+  const currentMicId = localStream.getAudioTracks()[0]?.getSettings().deviceId ?? "";
+  const currentCamId = localStream.getVideoTracks()[0]?.getSettings().deviceId ?? "";
 
   const remoteShowsVideo =
     call.state === "connected" &&
@@ -199,9 +229,39 @@ export function CallScreen({
             muted
             micOff={!call.micOn}
             label="Você"
+            refreshKey={call.streamEpoch}
           />
         </div>
       </div>
+
+      {/* Painel de dispositivos (⚙️) — troca a quente, sem derrubar a chamada */}
+      {showSettings && (
+        <div className="mx-auto w-full max-w-sm space-y-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-4">
+          <div className="flex items-center justify-between">
+            <p className="font-semibold">Dispositivos</p>
+            <button
+              type="button"
+              onClick={() => setShowSettings(false)}
+              aria-label="Fechar dispositivos"
+              className="rounded-lg border border-[color:var(--color-line)] px-2 py-1 text-sm transition hover:bg-[color:var(--color-panel-2)]"
+            >
+              ✕
+            </button>
+          </div>
+          <DevicePicker
+            cams={devices.cams}
+            mics={devices.mics}
+            camId={currentCamId}
+            micId={currentMicId}
+            showCamera
+            onCam={(id) => void call.switchCam(id)}
+            onMic={(id) => void call.switchMic(id)}
+          />
+          <p className="text-xs text-[color:var(--color-ink-dim)]">
+            A troca acontece na hora, sem interromper a conversa.
+          </p>
+        </div>
+      )}
 
       {/* Barra de controles */}
       <div className="flex items-center justify-center gap-3 pb-1">
@@ -225,6 +285,13 @@ export function CallScreen({
           title={call.speakerOn ? "Silenciar o som que recebo" : "Voltar a ouvir"}
         >
           {call.speakerOn ? "🔊" : "🔈"}
+        </ControlButton>
+        <ControlButton
+          active
+          onClick={() => setShowSettings((s) => !s)}
+          title="Escolher câmera e microfone"
+        >
+          ⚙️
         </ControlButton>
         <ControlButton
           active

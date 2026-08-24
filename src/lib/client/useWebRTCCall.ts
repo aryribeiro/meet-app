@@ -49,6 +49,11 @@ export interface UseWebRTCCallResult {
   toggleMic: () => void;
   toggleCam: () => Promise<void>;
   toggleSpeaker: () => void;
+  /** Troca microfone/câmera DURANTE a chamada (replaceTrack — sem renegociar). */
+  switchMic: (deviceId: string) => Promise<boolean>;
+  switchCam: (deviceId: string) => Promise<boolean>;
+  /** Incrementa quando os tracks locais mudam — força o <video> local a ressincronizar. */
+  streamEpoch: number;
   hangUp: () => Promise<void>;
 }
 
@@ -69,6 +74,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
   const [camOn, setCamOn] = useState(args.startWithVideo);
   const [speakerOn, setSpeakerOn] = useState(true);
   const [localFallback, setLocalFallback] = useState(false);
+  const [streamEpoch, setStreamEpoch] = useState(0);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const signalingRef = useRef<SignalingChannel | null>(null);
@@ -326,6 +332,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       pcRef.current?.addTrack(track, args.localStream);
       wantCamRef.current = true;
       setCamOn(true);
+      setStreamEpoch((e) => e + 1);
       if (pcRef.current) void applyVideoCeiling(pcRef.current);
       sendMediaState();
       return;
@@ -339,6 +346,86 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
   const toggleSpeaker = useCallback(() => {
     setSpeakerOn((s) => !s);
   }, []);
+
+  /**
+   * Troca de dispositivo a quente: captura o novo track, faz replaceTrack no
+   * sender (sem renegociação — o outro lado nem percebe), preserva o estado de
+   * mute/câmera desligada e derruba o track antigo.
+   */
+  const switchDevice = useCallback(
+    async (kind: "audio" | "video", deviceId: string): Promise<boolean> => {
+      const pc = pcRef.current;
+      let captured: MediaStream;
+      try {
+        captured = await navigator.mediaDevices.getUserMedia(
+          kind === "audio"
+            ? {
+                audio: {
+                  deviceId: { exact: deviceId },
+                  echoCancellation: true,
+                  noiseSuppression: true,
+                  autoGainControl: true,
+                },
+              }
+            : {
+                video: {
+                  deviceId: { exact: deviceId },
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 },
+                },
+              },
+        );
+      } catch {
+        return false; // dispositivo ocupado/removido — mantém o atual
+      }
+      const newTrack =
+        kind === "audio" ? captured.getAudioTracks()[0] : captured.getVideoTracks()[0];
+      if (!newTrack) return false;
+
+      const old =
+        kind === "audio"
+          ? args.localStream.getAudioTracks()[0]
+          : args.localStream.getVideoTracks()[0];
+
+      // Preserva a intenção do usuário: mute segue mutado, câmera desligada segue desligada.
+      newTrack.enabled = old
+        ? old.enabled
+        : kind === "video"
+          ? wantCamRef.current && !(monitorRef.current?.isDegraded ?? false)
+          : true;
+
+      if (old) {
+        const sender = pc?.getSenders().find((s) => s.track === old);
+        if (sender) await sender.replaceTrack(newTrack);
+        args.localStream.removeTrack(old);
+        old.stop();
+        args.localStream.addTrack(newTrack);
+      } else {
+        // Não havia track desse tipo (entrou só com voz): adiciona — a
+        // renegociação disparada é coberta pelo perfect negotiation.
+        args.localStream.addTrack(newTrack);
+        pc?.addTrack(newTrack, args.localStream);
+      }
+
+      if (pc) {
+        if (kind === "video") void applyVideoCeiling(pc);
+        else void applyAudioProfile(pc, monitorRef.current?.isDegraded ?? false);
+      }
+      setStreamEpoch((e) => e + 1);
+      sendMediaState();
+      return true;
+    },
+    [args.localStream, sendMediaState],
+  );
+
+  const switchMic = useCallback(
+    (deviceId: string) => switchDevice("audio", deviceId),
+    [switchDevice],
+  );
+  const switchCam = useCallback(
+    (deviceId: string) => switchDevice("video", deviceId),
+    [switchDevice],
+  );
 
   const hangUp = useCallback(async () => {
     endedRef.current = true;
@@ -362,6 +449,9 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     toggleMic,
     toggleCam,
     toggleSpeaker,
+    switchMic,
+    switchCam,
+    streamEpoch,
     hangUp,
   };
 }

@@ -3,9 +3,15 @@
 // Tela de pré-chamada: perfil (nome + foto de fallback), preview de câmera/mic,
 // escolha do modo de entrada (só voz ou vídeo) e senha da sala quando exigida.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getLocalMedia, shrinkImage } from "@/lib/client/media";
+import {
+  getLocalMedia,
+  listDevices,
+  shrinkImage,
+  type MediaDeviceOption,
+} from "@/lib/client/media";
 import { AVATAR_MAX_SIDE } from "@/lib/shared/constants";
 import { Avatar } from "./Avatar";
+import { DevicePicker } from "./DevicePicker";
 
 export interface PreCallResult {
   name: string;
@@ -35,6 +41,11 @@ export function PreCall({
   const [relayOnly, setRelayOnly] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [devices, setDevices] = useState<{ cams: MediaDeviceOption[]; mics: MediaDeviceOption[] }>(
+    { cams: [], mics: [] },
+  );
+  const [micId, setMicId] = useState("");
+  const [camId, setCamId] = useState("");
   const [joining, setJoining] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   // Fluxo entregue à chamada: a limpeza do unmount NÃO pode pará-lo — foi o bug
@@ -47,7 +58,7 @@ export function PreCall({
     let cancelled = false;
     let current: MediaStream | null = null;
     setMediaError(null);
-    getLocalMedia(withVideo)
+    getLocalMedia(withVideo, { micId: micId || undefined, camId: camId || undefined })
       .then((s) => {
         if (cancelled) {
           for (const t of s.getTracks()) t.stop();
@@ -57,6 +68,10 @@ export function PreCall({
         setStream((prev) => {
           if (prev) for (const t of prev.getTracks()) t.stop();
           return s;
+        });
+        // Rótulos dos dispositivos só existem após a permissão — enumera agora.
+        void listDevices().then((d) => {
+          if (!cancelled) setDevices(d);
         });
       })
       .catch(() => {
@@ -75,7 +90,7 @@ export function PreCall({
         for (const t of current.getTracks()) t.stop();
       }
     };
-  }, [withVideo]);
+  }, [withVideo, micId, camId]);
 
   useEffect(() => {
     if (videoRef.current && stream) videoRef.current.srcObject = stream;
@@ -150,6 +165,18 @@ export function PreCall({
           🎙️ Só voz
         </button>
       </div>
+
+      {(devices.mics.length > 1 || (withVideo && devices.cams.length > 1)) && (
+        <DevicePicker
+          cams={devices.cams}
+          mics={devices.mics}
+          camId={camId || (stream?.getVideoTracks()[0]?.getSettings().deviceId ?? "")}
+          micId={micId || (stream?.getAudioTracks()[0]?.getSettings().deviceId ?? "")}
+          showCamera={withVideo}
+          onCam={setCamId}
+          onMic={setMicId}
+        />
+      )}
 
       <div className="space-y-3">
         <label className="block space-y-1">

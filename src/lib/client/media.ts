@@ -13,18 +13,60 @@ import {
   VIDEO_MAX_BITRATE,
 } from "@/lib/shared/constants";
 
+/** Preferência de dispositivos escolhida pelo usuário (vazio = padrão do sistema). */
+export interface DevicePreference {
+  micId?: string;
+  camId?: string;
+}
+
 /** Captura com vídeo 720p (contrato) e processamento de voz ligado. */
-export async function getLocalMedia(withVideo: boolean): Promise<MediaStream> {
-  return navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    },
-    video: withVideo
-      ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }
-      : false,
-  });
+export async function getLocalMedia(
+  withVideo: boolean,
+  pref: DevicePreference = {},
+): Promise<MediaStream> {
+  const video: MediaTrackConstraints | false = withVideo
+    ? pref.camId
+      ? { deviceId: { exact: pref.camId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+      : { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }
+    : false;
+  const audio: MediaTrackConstraints = {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+  };
+  if (pref.micId) audio.deviceId = { exact: pref.micId };
+  return navigator.mediaDevices.getUserMedia({ audio, video });
+}
+
+export interface MediaDeviceOption {
+  id: string;
+  label: string;
+}
+
+/**
+ * Lista câmeras e microfones. Os rótulos só existem depois de uma permissão de
+ * mídia concedida — por isso chamar após o primeiro getUserMedia.
+ */
+export async function listDevices(): Promise<{
+  cams: MediaDeviceOption[];
+  mics: MediaDeviceOption[];
+}> {
+  const cams: MediaDeviceOption[] = [];
+  const mics: MediaDeviceOption[] = [];
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    for (const d of devices) {
+      if (!d.deviceId) continue;
+      if (d.kind === "videoinput") {
+        cams.push({ id: d.deviceId, label: d.label || `Câmera ${cams.length + 1}` });
+      } else if (d.kind === "audioinput") {
+        mics.push({ id: d.deviceId, label: d.label || `Microfone ${mics.length + 1}` });
+      }
+    }
+  } catch {
+    // enumeração bloqueada — seletor simplesmente não aparece
+  }
+  return { cams, mics };
 }
 
 /** Aplica teto de bitrate num sender (áudio: Opus adapta sozinho abaixo do teto —

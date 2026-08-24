@@ -94,6 +94,27 @@ async function main() {
     await guest.locator("[title='Microfone desligado']").waitFor({ timeout: 10000 });
     check("mute refletiu no outro participante", true);
 
+    // Painel de dispositivos: abre, "troca" para o mesmo dispositivo fake (exercita
+    // getUserMedia + replaceTrack + resync do preview) e o vídeo precisa seguir vivo.
+    await host.getByRole("button", { name: "Escolher câmera e microfone" }).click();
+    const selects = host.locator("select");
+    await selects.first().waitFor({ timeout: 10000 });
+    const nSelects = await selects.count();
+    check("painel de dispositivos lista seletores", nSelects >= 1);
+    for (let i = 0; i < nSelects; i++) {
+      const sel = selects.nth(i);
+      const value = await sel.inputValue();
+      if (value) await sel.selectOption(value);
+    }
+    await host.waitForTimeout(2000);
+    const vidsAfterSwitch = await videosAlive(host);
+    check(
+      "vídeo local segue vivo após troca de dispositivo",
+      vidsAfterSwitch.length === 2 && vidsAfterSwitch.every((v) => v.width > 0 && v.advancing),
+      JSON.stringify(vidsAfterSwitch),
+    );
+    await host.getByRole("button", { name: "Fechar dispositivos" }).click();
+
     // Encerramento pelo convidado: anfitrião deve ver a tela de fim e o link morrer.
     await guest.getByRole("button", { name: /Encerrar a conversa/ }).click();
     await host.getByText("Conversa encerrada").waitFor({ timeout: 15000 });
