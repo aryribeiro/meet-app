@@ -52,6 +52,13 @@ async function joinAs(page, url, name, photoColor = null) {
   await page.goto(url);
   await page.getByPlaceholder("Como o outro vai te ver").fill(name);
   if (photoColor) await pickSolidPhoto(page, photoColor);
+  // RELAY=1: força o modo relay-only (toggle de privacidade) — prova que a
+  // mídia atravessa o TURN de verdade, não só que candidates existem.
+  if (process.env.RELAY === "1") {
+    const cb = page.locator("input[type=checkbox]");
+    await cb.waitFor({ timeout: 10000 });
+    await cb.check();
+  }
   const button = page.getByRole("button", { name: "Entrar na conversa" });
   await button.waitFor({ state: "visible" });
   // O botão habilita quando o preview de mídia está pronto.

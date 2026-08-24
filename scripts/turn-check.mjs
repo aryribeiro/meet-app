@@ -30,7 +30,7 @@ if (process.env.TURN_URL && process.env.TURN_USERNAME && process.env.TURN_CREDEN
   CANDIDATES.unshift({
     name: `TURN do .env (${process.env.TURN_URL})`,
     server: {
-      urls: [process.env.TURN_URL],
+      urls: process.env.TURN_URL.split(",").map((u) => u.trim()).filter(Boolean),
       username: process.env.TURN_USERNAME,
       credential: process.env.TURN_CREDENTIAL,
     },
