@@ -20,3 +20,6 @@ Thumbs.db
 # logs de diagnóstico salvos do browser
 *.log
 .vercel
+
+# contrato interno de arquitetura - nao publicar
+PROMPT.md

@@ -32,7 +32,7 @@ com CGNAT) ↔ celular 5G, com vídeo e áudio nos dois sentidos via relay.
   não há saída, tela clara com "Tentar de novo" (com reentrada do convidado na
   própria vaga) em vez de "reconectando" eterno.
 
-## Arquitetura (camadas do contrato — [PROMPT.md](PROMPT.md))
+## Arquitetura (camadas)
 
 - `src/lib/server/` — Turso (cliente singleton), PBKDF2 via Web Crypto, limpeza
   lazy (por amostragem no caminho quente). Sem cron, sem estado em memória.
