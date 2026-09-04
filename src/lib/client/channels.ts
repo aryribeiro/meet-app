@@ -19,8 +19,12 @@ export interface ProfilePayload {
 export interface MediaStatePayload {
   camOn: boolean;
   micOn: boolean;
-  /** true quando o remetente degradou o próprio vídeo para foto (qualidade ruim). */
+  /** true quando o remetente degradou o próprio vídeo para foto (qualidade ruim).
+   *  Mantido por compatibilidade: é derivado de `tier >= 2`. */
   fallback: boolean;
+  /** Degrau da escada de qualidade em que o remetente está ENVIANDO (0 HD … 3 voz
+   *  básica). Opcional: um peer de versão anterior não manda — cai no `fallback`. */
+  tier?: number;
 }
 
 export interface FileMetaPayload {

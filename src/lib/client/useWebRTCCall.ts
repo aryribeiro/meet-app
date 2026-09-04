@@ -7,7 +7,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { SignalingChannel, endRoom, type SignalPayload } from "./signaling";
 import { TypedChannel, type MediaStatePayload, type ProfilePayload } from "./channels";
 import { sasFromConnection } from "./sas";
-import { QualityMonitor, applyAudioProfile, applyVideoCeiling } from "./media";
+import { QualityMonitor, TIER_PROFILES, applyTierProfile, isQualityTier } from "./media";
+import { TIER_AUDIO_HD, TIER_HD, type QualityTier } from "@/lib/shared/constants";
+
+declare global {
+  interface Window {
+    /** Gancho de QA: força o degrau de qualidade que EU envio (mesmo efeito de
+     *  desligar a própria câmera — não há superfície nova). `null` solta. */
+    __meetQA?: {
+      forceTier: (tier: QualityTier | null) => void;
+      getTier: () => QualityTier;
+      /** O que o encoder está aplicando de fato (prova de que setParameters pegou). */
+      getEncodings: () => {
+        video: { scale: number | undefined; maxBitrate: number | undefined } | null;
+        audio: { maxBitrate: number | undefined } | null;
+      };
+    };
+  }
+}
 
 export type CallState =
   | "waiting" // aguardando o outro participante
@@ -49,6 +66,10 @@ export interface UseWebRTCCallResult {
   speakerOn: boolean;
   /** true quando NOSSO vídeo foi degradado para foto por qualidade de rede. */
   localFallback: boolean;
+  /** Degrau da escada em que estamos ENVIANDO (0 HD, 1 SD, 2 só voz, 3 voz básica). */
+  localTier: QualityTier;
+  /** Degrau em que o outro lado está enviando (derivado de `fallback` se ele for antigo). */
+  remoteTier: QualityTier;
   toggleMic: () => void;
   toggleCam: () => Promise<void>;
   toggleSpeaker: () => void;
@@ -77,6 +98,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
   const [camOn, setCamOn] = useState(args.startWithVideo);
   const [speakerOn, setSpeakerOn] = useState(true);
   const [localFallback, setLocalFallback] = useState(false);
+  const [localTier, setLocalTier] = useState<QualityTier>(TIER_HD);
   const [streamEpoch, setStreamEpoch] = useState(0);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -100,6 +122,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       camOn: camTrack?.enabled ?? false,
       micOn: micTrack?.enabled ?? false,
       fallback: monitorRef.current?.isDegraded ?? false,
+      tier: monitorRef.current?.tier ?? TIER_HD,
     } satisfies MediaStatePayload);
     void pc; // estado é lido dos tracks locais
   }, [args.localStream]);
@@ -162,6 +185,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
         camOn: Boolean(m?.camOn),
         micOn: Boolean(m?.micOn),
         fallback: Boolean(m?.fallback),
+        tier: isQualityTier(m?.tier) ? m.tier : undefined,
       });
     });
     channel.on("bye", () => {
@@ -231,8 +255,12 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
           signaling.sleep();
           void (async () => {
             setSas(await sasFromConnection(pc));
-            await applyVideoCeiling(pc);
-            await applyAudioProfile(pc, monitorRef.current?.isDegraded ?? false);
+            await applyTierProfile(
+              pc,
+              args.localStream,
+              monitorRef.current?.tier ?? TIER_HD,
+              wantCamRef.current,
+            );
           })();
           // Troca perfil + foto (só via DataChannel — nunca pelo servidor).
           channel.send("profile", { name: args.localName } satisfies ProfilePayload);
@@ -300,26 +328,32 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       }
     }
 
-    // Monitor de qualidade: degrada vídeo→foto e abaixa teto de áudio; recupera
-    // com histerese (limiares no constants.ts, definidos no contrato).
-    const monitor = new QualityMonitor(
-      pc,
-      () => {
-        const track = args.localStream.getVideoTracks()[0];
-        if (track) track.enabled = false;
-        setLocalFallback(true);
-        void applyAudioProfile(pc, true);
-        sendMediaState();
-      },
-      () => {
-        const track = args.localStream.getVideoTracks()[0];
-        if (track && wantCamRef.current) track.enabled = true;
-        setLocalFallback(false);
-        void applyAudioProfile(pc, false);
-        sendMediaState();
-      },
-    );
+    // Escada de qualidade: 720p → SD → só voz HD → voz básica, e volta um degrau
+    // por vez, com histerese (limiares no constants.ts, definidos no contrato).
+    // Só o que ENVIAMOS muda; o preview local segue em 720p.
+    const monitor = new QualityMonitor(pc, (tier) => {
+      setLocalTier(tier);
+      setLocalFallback(!TIER_PROFILES[tier].video);
+      void applyTierProfile(pc, args.localStream, tier, wantCamRef.current).then(sendMediaState);
+    });
     monitorRef.current = monitor;
+    window.__meetQA = {
+      forceTier: (tier) => monitor.force(tier),
+      getTier: () => monitor.tier,
+      getEncodings: () => {
+        let video: { scale: number | undefined; maxBitrate: number | undefined } | null = null;
+        let audio: { maxBitrate: number | undefined } | null = null;
+        for (const s of pc.getSenders()) {
+          const enc = s.getParameters().encodings?.[0];
+          if (s.track?.kind === "video") {
+            video = { scale: enc?.scaleResolutionDownBy, maxBitrate: enc?.maxBitrate };
+          } else if (s.track?.kind === "audio") {
+            audio = { maxBitrate: enc?.maxBitrate };
+          }
+        }
+        return { video, audio };
+      },
+    };
 
     signaling.wake();
 
@@ -339,6 +373,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       disposed = true;
       if (connectWatchdog) clearTimeout(connectWatchdog);
       window.removeEventListener("pagehide", onPageHide);
+      delete window.__meetQA;
       monitor.stop();
       signaling.close();
       pc.close();
@@ -375,7 +410,14 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       wantCamRef.current = true;
       setCamOn(true);
       setStreamEpoch((e) => e + 1);
-      if (pcRef.current) void applyVideoCeiling(pcRef.current);
+      if (pcRef.current) {
+        void applyTierProfile(
+          pcRef.current,
+          args.localStream,
+          monitorRef.current?.tier ?? TIER_HD,
+          true,
+        );
+      }
       sendMediaState();
       return;
     }
@@ -449,9 +491,14 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
         pc?.addTrack(newTrack, args.localStream);
       }
 
+      // O sender novo (ou o track trocado) precisa do perfil do degrau atual.
       if (pc) {
-        if (kind === "video") void applyVideoCeiling(pc);
-        else void applyAudioProfile(pc, monitorRef.current?.isDegraded ?? false);
+        void applyTierProfile(
+          pc,
+          args.localStream,
+          monitorRef.current?.tier ?? TIER_HD,
+          wantCamRef.current,
+        );
       }
       setStreamEpoch((e) => e + 1);
       sendMediaState();
@@ -488,6 +535,12 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     camOn,
     speakerOn,
     localFallback,
+    localTier,
+    remoteTier: isQualityTier(remoteMedia.tier)
+      ? remoteMedia.tier
+      : remoteMedia.fallback
+        ? TIER_AUDIO_HD
+        : TIER_HD,
     toggleMic,
     toggleCam,
     toggleSpeaker,

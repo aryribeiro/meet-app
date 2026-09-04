@@ -12,7 +12,8 @@
 // empilham em coluna, um sobre o outro, mantendo o 16:9.
 import { useEffect, useRef, useState } from "react";
 import type { UseWebRTCCallResult } from "@/lib/client/useWebRTCCall";
-import { listDevices, type MediaDeviceOption } from "@/lib/client/media";
+import { TIER_PROFILES, listDevices, type MediaDeviceOption } from "@/lib/client/media";
+import { TIER_AUDIO_HD, TIER_HD, TIER_SD, type QualityTier } from "@/lib/shared/constants";
 import { Avatar } from "./Avatar";
 import { DevicePicker } from "./DevicePicker";
 
@@ -28,6 +29,8 @@ function MediaTile({
   tile,
   dimmed = false,
   refreshKey = 0,
+  tier,
+  tierPrefix = "",
 }: {
   stream: MediaStream | null;
   showVideo: boolean;
@@ -44,6 +47,9 @@ function MediaTile({
   /** Troca de dispositivo muda os tracks do MESMO MediaStream — o srcObject
    *  precisa ser reatribuído para o elemento enxergar o track novo. */
   refreshKey?: number;
+  /** Degrau de qualidade que este lado está ENVIANDO (badge discreto; some se undefined). */
+  tier?: QualityTier;
+  tierPrefix?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
@@ -75,8 +81,37 @@ function MediaTile({
         <span>{label}</span>
         {micOff && <span title="Microfone desligado">🔇</span>}
       </div>
+      {tier !== undefined && (
+        <span
+          data-tier={tier}
+          title="Qualidade que este lado está enviando agora"
+          className={`absolute right-2 top-2 rounded-md bg-black/60 px-2 py-0.5 text-xs font-semibold ${
+            tier === TIER_HD
+              ? "text-[color:var(--color-ok)]"
+              : tier === TIER_SD
+                ? "text-[color:var(--color-ink)]"
+                : "text-[color:var(--color-warn)]"
+          }`}
+        >
+          {tierPrefix}
+          {TIER_PROFILES[tier].label}
+        </span>
+      )}
     </div>
   );
+}
+
+/** Texto honesto da faixa de qualidade, pelo pior degrau entre os dois lados. */
+function qualityNotice(localTier: QualityTier, remoteTier: QualityTier): string | null {
+  const worst = Math.max(localTier, remoteTier) as QualityTier;
+  if (worst === TIER_HD) return null;
+  if (worst === TIER_SD) {
+    return "A internet oscilou: o vídeo está em definição menor para a conversa continuar fluida. Volta ao normal sozinho quando melhorar.";
+  }
+  if (worst === TIER_AUDIO_HD) {
+    return "A internet oscilou: o vídeo virou foto por um instante para a voz continuar limpa. Ele volta sozinho quando a conexão melhorar.";
+  }
+  return "A internet está bem fraca: só a voz segue, em modo econômico, para a conversa não cair. Tudo volta sozinho quando melhorar.";
 }
 
 /** Célula do palco enquanto o outro participante ainda não chegou / não conectou. */
@@ -253,10 +288,12 @@ export function CallScreen({
             Conexão instável — tentando reconectar…
           </div>
         )}
-        {(call.localFallback || call.remoteMedia.fallback) && call.state === "connected" && (
-          <div className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-4 py-2 text-sm text-[color:var(--color-ink-dim)]">
-            A internet oscilou: o vídeo virou foto por um instante para a voz continuar limpa.
-            Ele volta sozinho quando a conexão melhorar.
+        {call.state === "connected" && qualityNotice(call.localTier, call.remoteTier) && (
+          <div
+            data-quality-notice
+            className="rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-4 py-2 text-sm text-[color:var(--color-ink-dim)]"
+          >
+            {qualityNotice(call.localTier, call.remoteTier)}
           </div>
         )}
       </div>
@@ -278,6 +315,8 @@ export function CallScreen({
           label={`${localName} (você)`}
           tile="local"
           refreshKey={call.streamEpoch}
+          tier={call.state === "connected" ? call.localTier : undefined}
+          tierPrefix="Enviando: "
         />
 
         {waiting ? (
@@ -297,6 +336,7 @@ export function CallScreen({
             label={call.remoteProfile.name}
             tile="remote"
             dimmed={call.state === "reconnecting"}
+            tier={call.state === "connected" ? call.remoteTier : undefined}
           />
         )}
       </section>

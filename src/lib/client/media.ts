@@ -1,16 +1,17 @@
-// Camada MEDIA: captura, teto de bitrate e monitor de qualidade com histerese.
-// Limiares definidos ANTES do código (PROMPT.md, emenda 3).
+// Camada MEDIA: captura, perfis de envio (escada de qualidade) e monitor com
+// histerese. Limiares definidos ANTES do código (constants.ts; PROMPT.md emenda 3
+// estendida para 4 degraus no conselho de 2026-09-04).
+import { QualityLadder } from "@/lib/shared/ladder";
+export type { QualitySample } from "@/lib/shared/ladder";
 import {
   AUDIO_BITRATE_DEGRADED,
   AUDIO_BITRATE_NORMAL,
-  DEGRADE_LOSS,
-  DEGRADE_RTT_MS,
-  DEGRADE_SAMPLES,
-  RECOVER_LOSS,
-  RECOVER_RTT_MS,
-  RECOVER_SAMPLES,
+  MIN_DELTA_PACKETS,
   STATS_INTERVAL_MS,
   VIDEO_MAX_BITRATE,
+  VIDEO_SD_MAX_BITRATE,
+  VIDEO_SD_SCALE,
+  type QualityTier,
 } from "@/lib/shared/constants";
 
 /** Preferência de dispositivos escolhida pelo usuário (vazio = padrão do sistema). */
@@ -69,17 +70,70 @@ export async function listDevices(): Promise<{
   return { cams, mics };
 }
 
-/** Aplica teto de bitrate num sender (áudio: Opus adapta sozinho abaixo do teto —
- *  decisão do contrato: não construir HD/não-HD manual; só mover o teto). */
-export async function setMaxBitrate(
+// ——— Perfis de envio ———
+
+export interface TierProfile {
+  /** Vídeo é enviado neste degrau? (false = foto/inicial do outro lado) */
+  video: boolean;
+  /** Divisor de resolução aplicado no encoder (1 = 720p, 2 = 360p). */
+  videoScale: number;
+  videoMaxBitrate: number;
+  audioMaxBitrate: number;
+  /** Rótulo curto para o badge do tile. */
+  label: string;
+}
+
+export const TIER_PROFILES: Record<QualityTier, TierProfile> = {
+  0: {
+    video: true,
+    videoScale: 1,
+    videoMaxBitrate: VIDEO_MAX_BITRATE,
+    audioMaxBitrate: AUDIO_BITRATE_NORMAL,
+    label: "HD",
+  },
+  1: {
+    video: true,
+    videoScale: VIDEO_SD_SCALE,
+    videoMaxBitrate: VIDEO_SD_MAX_BITRATE,
+    audioMaxBitrate: AUDIO_BITRATE_NORMAL,
+    label: "SD",
+  },
+  2: {
+    video: false,
+    videoScale: 1,
+    videoMaxBitrate: VIDEO_MAX_BITRATE,
+    audioMaxBitrate: AUDIO_BITRATE_NORMAL,
+    label: "Só voz",
+  },
+  3: {
+    video: false,
+    videoScale: 1,
+    videoMaxBitrate: VIDEO_MAX_BITRATE,
+    audioMaxBitrate: AUDIO_BITRATE_DEGRADED,
+    label: "Voz básica",
+  },
+};
+
+export function isQualityTier(n: unknown): n is QualityTier {
+  return n === 0 || n === 1 || n === 2 || n === 3;
+}
+
+/** Ajusta a codificação de um sender (setParameters: sem renegociar, sem tocar
+ *  no preview local — só o que SAI muda). */
+async function setEncoding(
   sender: RTCRtpSender,
-  maxBitrate: number,
+  patch: { maxBitrate: number; scaleResolutionDownBy?: number },
 ): Promise<void> {
   const params = sender.getParameters();
   if (!params.encodings || params.encodings.length === 0) {
     params.encodings = [{}];
   }
-  for (const enc of params.encodings) enc.maxBitrate = maxBitrate;
+  for (const enc of params.encodings) {
+    enc.maxBitrate = patch.maxBitrate;
+    if (patch.scaleResolutionDownBy !== undefined) {
+      enc.scaleResolutionDownBy = patch.scaleResolutionDownBy;
+    }
+  }
   try {
     await sender.setParameters(params);
   } catch {
@@ -88,52 +142,70 @@ export async function setMaxBitrate(
   }
 }
 
-export async function applyAudioProfile(
+/**
+ * Aplica o perfil de um degrau nos senders. `wantCam` = intenção do usuário
+ * (câmera ligada); o degrau só pode DESLIGAR o vídeo, nunca ligar contra a vontade.
+ */
+export async function applyTierProfile(
   pc: RTCPeerConnection,
-  degraded: boolean,
+  localStream: MediaStream,
+  tier: QualityTier,
+  wantCam: boolean,
 ): Promise<void> {
+  const profile = TIER_PROFILES[tier];
+  const camTrack = localStream.getVideoTracks()[0];
+  if (camTrack) camTrack.enabled = wantCam && profile.video;
   for (const sender of pc.getSenders()) {
-    if (sender.track?.kind === "audio") {
-      await setMaxBitrate(sender, degraded ? AUDIO_BITRATE_DEGRADED : AUDIO_BITRATE_NORMAL);
+    const kind = sender.track?.kind;
+    if (kind === "video") {
+      await setEncoding(sender, {
+        maxBitrate: profile.videoMaxBitrate,
+        scaleResolutionDownBy: profile.videoScale,
+      });
+    } else if (kind === "audio") {
+      await setEncoding(sender, { maxBitrate: profile.audioMaxBitrate });
     }
   }
 }
 
-export async function applyVideoCeiling(pc: RTCPeerConnection): Promise<void> {
-  for (const sender of pc.getSenders()) {
-    if (sender.track?.kind === "video") {
-      await setMaxBitrate(sender, VIDEO_MAX_BITRATE);
-    }
-  }
-}
-
-export interface QualitySample {
-  lossRatio: number;
-  rttMs: number;
-}
+// ——— Monitor (a escada pura vive em @/lib/shared/ladder) ———
 
 /**
- * Monitor com HISTERESE:
- * - degrada com perda > 8% OU RTT > 400 ms em 3 amostras consecutivas;
- * - recupera com perda < 2% E RTT < 250 ms em 5 amostras consecutivas.
- * Sem histerese o vídeo liga/desliga em rede oscilante — o defeito clássico.
+ * Monitor: amostra getStats() a cada 2 s, alimenta a escada e avisa quando o
+ * degrau muda. A métrica é o que o OUTRO lado reporta receber do que EU envio
+ * (remote-inbound-rtp) + RTT do par de candidatos: cada lado adapta o próprio envio.
  */
 export class QualityMonitor {
   private timer: ReturnType<typeof setInterval> | null = null;
-  private badStreak = 0;
-  private goodStreak = 0;
-  private degraded = false;
+  private readonly ladder = new QualityLadder();
   private lastPacketsSent = 0;
   private lastPacketsLost = 0;
+  /** QA: degrau travado à mão; a automação fica suspensa até soltar. */
+  private frozen = false;
 
   constructor(
     private readonly pc: RTCPeerConnection,
-    private readonly onDegrade: () => void,
-    private readonly onRecover: () => void,
+    private readonly onTier: (tier: QualityTier) => void,
   ) {}
 
+  get tier(): QualityTier {
+    return this.ladder.tier;
+  }
+
+  /** true quando o vídeo foi sacrificado (degraus 2 e 3). */
   get isDegraded(): boolean {
-    return this.degraded;
+    return !TIER_PROFILES[this.ladder.tier].video;
+  }
+
+  /** Força um degrau (QA/e2e). `null` solta a trava e a automação retoma. */
+  force(tier: QualityTier | null): void {
+    if (tier === null) {
+      this.frozen = false;
+      return;
+    }
+    this.frozen = true;
+    this.ladder.set(tier);
+    this.onTier(tier);
   }
 
   start(): void {
@@ -179,33 +251,12 @@ export class QualityMonitor {
     const deltaLost = packetsLost - this.lastPacketsLost;
     this.lastPacketsSent = packetsSent;
     this.lastPacketsLost = packetsLost;
-    if (deltaSent <= 0) return; // sem tráfego novo, amostra inútil
+    if (deltaSent < MIN_DELTA_PACKETS) return; // pouco tráfego novo: amostra é ruído
+    if (this.frozen) return;
 
     const lossRatio = Math.max(0, deltaLost) / (deltaSent + Math.max(0, deltaLost));
-    const bad = lossRatio > DEGRADE_LOSS || rttMs > DEGRADE_RTT_MS;
-    const good = lossRatio < RECOVER_LOSS && rttMs < RECOVER_RTT_MS;
-
-    if (bad) {
-      this.badStreak += 1;
-      this.goodStreak = 0;
-    } else if (good) {
-      this.goodStreak += 1;
-      this.badStreak = 0;
-    } else {
-      // zona morta da histerese: zera os dois — exige consistência real
-      this.badStreak = 0;
-      this.goodStreak = 0;
-    }
-
-    if (!this.degraded && this.badStreak >= DEGRADE_SAMPLES) {
-      this.degraded = true;
-      this.badStreak = 0;
-      this.onDegrade();
-    } else if (this.degraded && this.goodStreak >= RECOVER_SAMPLES) {
-      this.degraded = false;
-      this.goodStreak = 0;
-      this.onRecover();
-    }
+    const next = this.ladder.feed({ lossRatio, rttMs });
+    if (next !== null) this.onTier(next);
   }
 }
 

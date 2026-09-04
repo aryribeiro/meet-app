@@ -191,6 +191,78 @@ async function main() {
       .waitFor({ state: "detached", timeout: 15000 });
     check("vídeo do anfitrião voltou ao religar a câmera", true);
     await guest.getByRole("button", { name: "Ligar minha câmera" }).click();
+    await host.locator('[data-tile="remote"] img').waitFor({ state: "detached", timeout: 15000 });
+
+    // ESCADA DE QUALIDADE (720p → SD → só voz HD → voz básica → volta): o
+    // anfitrião força cada degrau pelo gancho de QA; a prova é dupla — o encoder
+    // dele precisa refletir o perfil (getParameters) E o convidado precisa ver o
+    // efeito (badge do tile remoto, foto no lugar do vídeo, vídeo voltando).
+    const forceTier = (page, tier) => page.evaluate((t) => window.__meetQA.forceTier(t), tier);
+    const encodings = (page) => page.evaluate(() => window.__meetQA.getEncodings());
+    const waitTierBadge = (page, tier) =>
+      page.locator(`[data-tile="remote"] [data-tier="${tier}"]`).waitFor({ timeout: 10000 });
+    const alive = (vids) => vids.length === 2 && vids.every((v) => v.width > 0 && v.advancing);
+
+    await forceTier(host, 1);
+    await waitTierBadge(guest, 1);
+    let enc = await encodings(host);
+    check(
+      "SD: encoder do anfitrião em metade da resolução e 400 kbps",
+      enc.video?.scale === 2 && enc.video?.maxBitrate === 400000,
+      JSON.stringify(enc),
+    );
+    check("SD: vídeo do anfitrião segue chegando no convidado", alive(await videosAlive(guest)));
+
+    await forceTier(host, 2);
+    await guest.locator('[data-tile="remote"] img').waitFor({ timeout: 10000 });
+    await waitTierBadge(guest, 2);
+    enc = await encodings(host);
+    check(
+      "Só voz HD: convidado vê a foto e a voz segue a 64 kbps",
+      enc.audio?.maxBitrate === 64000,
+      JSON.stringify(enc),
+    );
+
+    await forceTier(host, 3);
+    await waitTierBadge(guest, 3);
+    enc = await encodings(host);
+    check("Voz básica: teto de áudio caiu para 16 kbps", enc.audio?.maxBitrate === 16000, JSON.stringify(enc));
+
+    await forceTier(host, 0);
+    await guest.locator('[data-tile="remote"] img').waitFor({ state: "detached", timeout: 10000 });
+    await waitTierBadge(guest, 0);
+    enc = await encodings(host);
+    check(
+      "HD restaurado: escala 1, 1,2 Mbps, voz 64 kbps e vídeo fluindo de novo",
+      enc.video?.scale === 1 &&
+        enc.video?.maxBitrate === 1200000 &&
+        enc.audio?.maxBitrate === 64000 &&
+        alive(await videosAlive(guest)),
+      JSON.stringify(enc),
+    );
+    await forceTier(host, null); // solta a automação
+
+    // ESTRESSE opcional (STRESS=N): N ciclos completos da escada nos DOIS lados
+    // ao mesmo tempo; no fim de cada ciclo o vídeo precisa estar vivo nos dois.
+    const cycles = Number(process.env.STRESS ?? 0);
+    if (cycles > 0) {
+      let okAll = true;
+      const t0 = Date.now();
+      for (let c = 0; c < cycles && okAll; c++) {
+        for (const t of [1, 2, 3, 2, 1, 0]) {
+          await Promise.all([forceTier(host, t), forceTier(guest, t)]);
+          await Promise.all([waitTierBadge(guest, t), waitTierBadge(host, t)]);
+        }
+        const [vg, vh] = await Promise.all([videosAlive(guest), videosAlive(host)]);
+        okAll = alive(vg) && alive(vh);
+        if (!okAll) console.log(`  ciclo ${c + 1} falhou: ${JSON.stringify({ vg, vh })}`);
+      }
+      check(
+        `estresse: ${cycles} ciclos da escada nos dois lados, vídeo vivo ao fim de cada um (${Math.round((Date.now() - t0) / 1000)} s)`,
+        okAll,
+      );
+      await Promise.all([forceTier(host, null), forceTier(guest, null)]);
+    }
 
     // Encerramento pelo convidado: anfitrião deve ver a tela de fim e o link morrer.
     await guest.getByRole("button", { name: /Encerrar a conversa/ }).click();

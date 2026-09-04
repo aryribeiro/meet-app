@@ -39,6 +39,33 @@ export const AUDIO_BITRATE_DEGRADED = 16_000;
 /** Teto de bitrate do vídeo 720p. */
 export const VIDEO_MAX_BITRATE = 1_200_000;
 
+// ——— Escada de qualidade (4 perfis; extensão da emenda 3, decidida no conselho de 2026-09-04) ———
+// Cada lado adapta SÓ O QUE ENVIA (a métrica é o que o outro reporta receber).
+// Ordem de sacrifício: resolução → vídeo → fidelidade da voz. A voz nunca cai.
+//   0 = HD:        720p @ VIDEO_MAX_BITRATE + voz 64 kbps
+//   1 = SD:        360p (scaleResolutionDownBy 2) @ VIDEO_SD_MAX_BITRATE + voz 64 kbps
+//   2 = só voz HD: vídeo desligado (foto/inicial no outro lado) + voz 64 kbps
+//   3 = voz básica: vídeo desligado + voz 16 kbps
+export type QualityTier = 0 | 1 | 2 | 3;
+export const TIER_HD: QualityTier = 0;
+export const TIER_SD: QualityTier = 1;
+export const TIER_AUDIO_HD: QualityTier = 2;
+export const TIER_AUDIO_LOW: QualityTier = 3;
+export const TIER_MAX: QualityTier = 3;
+
+/** Perfil SD: metade da resolução (720p → 360p) e teto de 400 kbps. */
+export const VIDEO_SD_SCALE = 2;
+export const VIDEO_SD_MAX_BITRATE = 400_000;
+
+/** Descida: DEGRADE_* em DEGRADE_SAMPLES amostras desce UM degrau.
+ *  Perda SEVERA (só perda — RTT alto em relay é normal) pula direto para o
+ *  perfil "só voz HD": esperar em vídeo destruído é jogar bitrate fora.
+ *  Subida: RECOVER_* em RECOVER_SAMPLES amostras sobe UM degrau, nunca pula. */
+export const SEVERE_LOSS = 0.2;
+
+/** Amostra com menos pacotes novos que isto é ignorada (não decidir sobre ruído). */
+export const MIN_DELTA_PACKETS = 20;
+
 // ——— Transferência via DataChannel (foto de fallback hoje; arquivos no futuro) ———
 
 export const CHUNK_SIZE = 16 * 1024;
