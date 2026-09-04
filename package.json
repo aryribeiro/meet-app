@@ -10,7 +10,8 @@
     "test:api": "node tests/api.test.mjs",
     "test:handshake": "node scripts/handshake-sim.mjs",
     "test:e2e": "node scripts/e2e-call.mjs",
-    "smoke:prod": "node tests/smoke-prod.mjs"
+    "smoke:prod": "node tests/smoke-prod.mjs",
+    "qa:shots": "node scripts/qa-shots.mjs"
   },
   "dependencies": {
     "@libsql/client": "^0.15.0",
