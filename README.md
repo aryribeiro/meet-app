@@ -20,6 +20,16 @@ com CGNAT) ↔ celular 5G, com vídeo e áudio nos dois sentidos via relay.
   operador do serviço consegue interceptar a chamada.
 - **Perfil pré-reunião** — nome + foto opcional; trafegam **só pelo DataChannel**
   (nunca sobem ao servidor). A foto é o fallback do vídeo.
+- **Palco 50/50 (estilo estúdio)** — dois tiles 16:9 do mesmo tamanho, lado a
+  lado, centralizados sob o título (largura máxima 1280 px), nunca tela cheia:
+  cada vídeo é exibido perto do tamanho em que foi capturado, sem esticar — o
+  que gravações precisam. No celular em pé os tiles empilham.
+- **Escada de qualidade por lado (4 degraus, automática)** — cada participante
+  adapta só o que **envia**, pela perda que o outro reporta: 720p → SD (360p) →
+  só voz HD com foto/inicial no lugar do vídeo → voz básica. Desce rápido (3
+  amostras), sobe devagar e um degrau por vez (5 amostras); perda severa pula
+  direto para "só voz". A voz é a última coisa a ceder. Badge discreto no tile
+  mostra o degrau de cada lado; o preview local segue sempre em 720p.
 - **Fallback de foto nos dois sentidos** — câmera desligada (ou rede degradada) →
   o outro lado vê a foto; religou/melhorou → o vídeo volta sozinho (histerese).
 - **Seleção de câmera e microfone** — na pré-chamada e durante a reunião (painel
@@ -47,8 +57,11 @@ com CGNAT) ↔ celular 5G, com vídeo e áudio nos dois sentidos via relay.
   - `channels.ts` — protocolo tipado/versionado do DataChannel com registro de
     handlers e transferência em chunks com backpressure (chat/arquivos futuros =
     um handler novo, sem tocar no transporte);
-  - `media.ts` — 720p, tetos de bitrate, monitor de qualidade com histerese
-    (degrada: perda >8% ou RTT >400 ms ×3; recupera: perda <2% e RTT <250 ms ×5);
+  - `media.ts` — 720p, perfis de envio por degrau (`setParameters`: escala e
+    teto de bitrate, sem renegociar) e monitor via `getStats()` a cada 2 s;
+  - `src/lib/shared/ladder.ts` — a escada em si, máquina de estados pura
+    (degrada: perda >8% ou RTT >400 ms ×3; severa: perda >20% pula para só voz;
+    recupera: perda <2% e RTT <250 ms ×5, um degrau por vez);
   - `sas.ts` — derivação do código de segurança.
 - `src/app/` — home, `/sala/[id]`, `/painel` (operador), `/privacidade`.
 
@@ -75,8 +88,11 @@ o painel **obriga a troca** no primeiro login.
 |---|---|
 | `npm run typecheck` | TypeScript estrito sem erros |
 | `npm run test:api` | Rotas contra o Turso real: senha, vaga atômica, expiração, limpeza |
+| `npm run test:ladder` | Escada de qualidade em Node puro: 17 checks (descida, subida um a um, salto severo, RTT sem perda, histerese) |
 | `npm run test:handshake` | Dois peers simulados trocando offer/answer pelas rotas reais |
-| `npm run test:e2e` | **Chamada real** (2 browsers, mídia fake): 15 checks — SAS igual nos dois lados, pixels de vídeo fluindo, fallback de foto por cor, troca de dispositivo, mutes, encerramento |
+| `npm run test:e2e` | **Chamada real** (2 browsers, mídia fake): 20 checks — SAS igual nos dois lados, pixels de vídeo fluindo, fallback de foto por cor, troca de dispositivo, mutes, **cada degrau da escada forçado e provado no encoder e no outro lado**, encerramento |
+| `STRESS=N npm run test:e2e` | O mesmo + N ciclos completos da escada nos dois lados ao mesmo tempo, vídeo vivo ao fim de cada ciclo |
+| `npm run qa:shots` | Capturas do palco (desktop e celular, espera, conectado, foto/inicial, badges) para QA visual |
 | `RELAY=1 npm run test:e2e` | O mesmo, com **relay-only forçado** — prova o caminho TURN de ponta a ponta |
 | `node scripts/turn-check.mjs` | O TURN configurado devolve relay candidates de verdade |
 | `npm run smoke:prod` | Smoke na URL de produção após o deploy |
