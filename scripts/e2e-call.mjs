@@ -203,6 +203,16 @@ async function main() {
       page.locator(`[data-tile="remote"] [data-tier="${tier}"]`).waitFor({ timeout: 10000 });
     const alive = (vids) => vids.length === 2 && vids.every((v) => v.width > 0 && v.advancing);
 
+    // Resolução que CHEGA no convidado (lida do <video>), antes de mexer na escada.
+    const rxHeight = async (page) =>
+      Number(
+        await page
+          .locator('[data-tile="remote"] [data-rx-height]')
+          .first()
+          .getAttribute("data-rx-height", { timeout: 10000 }),
+      );
+    const hdHeight = await rxHeight(guest);
+
     await forceTier(host, 1);
     await waitTierBadge(guest, 1);
     let enc = await encodings(host);
@@ -212,6 +222,20 @@ async function main() {
       JSON.stringify(enc),
     );
     check("SD: vídeo do anfitrião segue chegando no convidado", alive(await videosAlive(guest)));
+    // Prova no fio: o convidado passa a RECEBER metade da altura (badge lê o <video>).
+    await guest
+      .locator(`[data-tile="remote"] [data-rx-height="${Math.round(hdHeight / 2)}"]`)
+      .waitFor({ timeout: 15000 });
+    check(
+      `SD: convidado recebe ${Math.round(hdHeight / 2)}p de fato (era ${hdHeight}p)`,
+      true,
+    );
+    const rep = await host.evaluate(() => window.__meetQA.getReport());
+    check(
+      "SD: relatório do encoder do anfitrião reflete a altura enviada",
+      rep !== null && rep.sentHeight === Math.round(hdHeight / 2),
+      JSON.stringify(rep),
+    );
 
     await forceTier(host, 2);
     await guest.locator('[data-tile="remote"] img').waitFor({ timeout: 10000 });

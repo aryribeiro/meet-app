@@ -25,11 +25,18 @@ com CGNAT) ↔ celular 5G, com vídeo e áudio nos dois sentidos via relay.
   cada vídeo é exibido perto do tamanho em que foi capturado, sem esticar — o
   que gravações precisam. No celular em pé os tiles empilham.
 - **Escada de qualidade por lado (4 degraus, automática)** — cada participante
-  adapta só o que **envia**, pela perda que o outro reporta: 720p → SD (360p) →
-  só voz HD com foto/inicial no lugar do vídeo → voz básica. Desce rápido (3
-  amostras), sobe devagar e um degrau por vez (5 amostras); perda severa pula
-  direto para "só voz". A voz é a última coisa a ceder. Badge discreto no tile
-  mostra o degrau de cada lado; o preview local segue sempre em 720p.
+  adapta só o que **envia**, pela perda que o outro reporta, pela largura de
+  banda estimada (só quando o encoder declara limitação de rede) e pela
+  limitação de processador do aparelho: 720p → SD (360p) → só voz HD com
+  foto/inicial no lugar do vídeo → voz básica. Desce rápido (3 amostras), sobe
+  devagar e um degrau por vez (5 amostras; dobra até 4× se ficar pisca-pisca);
+  perda severa pula direto para "só voz". A voz é a última coisa a ceder. A
+  escada decide a resolução e o navegador sacrifica quadros por segundo, não
+  nitidez (`degradationPreference: maintain-resolution`).
+- **Badges honestos** — o tile local mostra a resolução que o encoder está
+  mandando **de fato** e por que está limitado ("· rede", "· aparelho"); o tile
+  remoto mostra a resolução que está **chegando**, lida do próprio vídeo. O
+  preview local segue sempre em 720p.
 - **Fallback de foto nos dois sentidos** — câmera desligada (ou rede degradada) →
   o outro lado vê a foto; religou/melhorou → o vídeo volta sozinho (histerese).
 - **Seleção de câmera e microfone** — na pré-chamada e durante a reunião (painel
@@ -88,9 +95,9 @@ o painel **obriga a troca** no primeiro login.
 |---|---|
 | `npm run typecheck` | TypeScript estrito sem erros |
 | `npm run test:api` | Rotas contra o Turso real: senha, vaga atômica, expiração, limpeza |
-| `npm run test:ladder` | Escada de qualidade em Node puro: 17 checks (descida, subida um a um, salto severo, RTT sem perda, histerese) |
+| `npm run test:ladder` | Escada de qualidade em Node puro: 37 checks (descida, subida um a um, salto severo, RTT de relay, largura de banda com gate do encoder, CPU do aparelho, anti pisca-pisca adaptativo) |
 | `npm run test:handshake` | Dois peers simulados trocando offer/answer pelas rotas reais |
-| `npm run test:e2e` | **Chamada real** (2 browsers, mídia fake): 20 checks — SAS igual nos dois lados, pixels de vídeo fluindo, fallback de foto por cor, troca de dispositivo, mutes, **cada degrau da escada forçado e provado no encoder e no outro lado**, encerramento |
+| `npm run test:e2e` | **Chamada real** (2 browsers, mídia fake): 22 checks — SAS igual nos dois lados, pixels de vídeo fluindo, fallback de foto por cor, troca de dispositivo, mutes, **cada degrau da escada forçado e provado no encoder, na resolução que chega no outro lado (720p → 360p) e no badge**, encerramento |
 | `STRESS=N npm run test:e2e` | O mesmo + N ciclos completos da escada nos dois lados ao mesmo tempo, vídeo vivo ao fim de cada ciclo |
 | `npm run qa:shots` | Capturas do palco (desktop e celular, espera, conectado, foto/inicial, badges) para QA visual |
 | `RELAY=1 npm run test:e2e` | O mesmo, com **relay-only forçado** — prova o caminho TURN de ponta a ponta |

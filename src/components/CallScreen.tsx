@@ -12,7 +12,12 @@
 // empilham em coluna, um sobre o outro, mantendo o 16:9.
 import { useEffect, useRef, useState } from "react";
 import type { UseWebRTCCallResult } from "@/lib/client/useWebRTCCall";
-import { TIER_PROFILES, listDevices, type MediaDeviceOption } from "@/lib/client/media";
+import {
+  TIER_PROFILES,
+  listDevices,
+  type MediaDeviceOption,
+  type SendReport,
+} from "@/lib/client/media";
 import { TIER_AUDIO_HD, TIER_HD, TIER_SD, type QualityTier } from "@/lib/shared/constants";
 import { Avatar } from "./Avatar";
 import { DevicePicker } from "./DevicePicker";
@@ -31,6 +36,7 @@ function MediaTile({
   refreshKey = 0,
   tier,
   tierPrefix = "",
+  report = null,
 }: {
   stream: MediaStream | null;
   showVideo: boolean;
@@ -50,25 +56,77 @@ function MediaTile({
   /** Degrau de qualidade que este lado está ENVIANDO (badge discreto; some se undefined). */
   tier?: QualityTier;
   tierPrefix?: string;
+  /** Tile local: o que o encoder manda DE FATO (resolução, razão de limitação). */
+  report?: SendReport | null;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
     if (videoRef.current && stream) videoRef.current.srcObject = stream;
   }, [stream, refreshKey]);
 
+  // Tile remoto: a resolução que está CHEGANDO, lida do próprio <video> — a
+  // verdade, independente do que o outro lado acha que manda.
+  const [rxHeight, setRxHeight] = useState<number | null>(null);
+  useEffect(() => {
+    if (tile !== "remote" || !showVideo) {
+      setRxHeight(null);
+      return;
+    }
+    const read = () => {
+      const h = videoRef.current?.videoHeight ?? 0;
+      setRxHeight(h > 0 ? h : null);
+    };
+    read();
+    const id = setInterval(read, 1000);
+    return () => clearInterval(id);
+  }, [tile, showVideo, refreshKey]);
+
+  // Texto do badge: o que está acontecendo, não o que a escada pretende.
+  let badge: string | null = null;
+  let badgeTitle = "Qualidade que este lado está enviando agora";
+  if (tier !== undefined) {
+    const profile = TIER_PROFILES[tier];
+    if (!profile.video) {
+      badge = profile.label;
+    } else if (tile === "local") {
+      const h = report?.sentHeight ?? null;
+      badge = h ? `${h}p` : profile.label;
+      if (report?.limitedBy === "bandwidth") {
+        badge += " · rede";
+        badgeTitle = "Sua internet está limitando o vídeo que você envia";
+      } else if (report?.limitedBy === "cpu") {
+        badge += " · aparelho";
+        badgeTitle = "Seu aparelho está no limite para codificar o vídeo";
+      }
+    } else {
+      badge = rxHeight ? `${rxHeight}p` : profile.label;
+      badgeTitle = "Resolução do vídeo que está chegando agora";
+    }
+  }
+  const badgeTone =
+    tier === undefined
+      ? ""
+      : tier === TIER_HD && report?.limitedBy !== "bandwidth" && report?.limitedBy !== "cpu"
+        ? "text-[color:var(--color-ok)]"
+        : tier === TIER_SD || tier === TIER_HD
+          ? "text-[color:var(--color-ink)]"
+          : "text-[color:var(--color-warn)]";
+
   return (
     <div
       data-tile={tile}
-      className="relative aspect-video w-full overflow-hidden rounded-xl bg-black ring-1 ring-[color:var(--color-line)]"
+      className="relative isolate aspect-video w-full overflow-hidden rounded-xl bg-black ring-1 ring-[color:var(--color-line)]"
     >
       {/* O elemento de vídeo fica sempre montado: é ele que TOCA O ÁUDIO.
-          Quando o vídeo cai/desliga, escondemos a imagem e mostramos a foto. */}
+          Quando o vídeo cai/desliga, escondemos a imagem e mostramos a foto.
+          rounded-xl também no <video>: o espelho (transform) do tile local
+          escapa do recorte arredondado do pai no Chrome. */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted={muted}
-        className={`${mirrored ? "mirror " : ""}h-full w-full object-cover transition-opacity ${
+        className={`${mirrored ? "mirror " : ""}h-full w-full rounded-xl object-cover transition-opacity ${
           showVideo ? "" : "invisible"
         } ${dimmed ? "opacity-40" : ""}`}
       />
@@ -81,20 +139,15 @@ function MediaTile({
         <span>{label}</span>
         {micOff && <span title="Microfone desligado">🔇</span>}
       </div>
-      {tier !== undefined && (
+      {tier !== undefined && badge && (
         <span
           data-tier={tier}
-          title="Qualidade que este lado está enviando agora"
-          className={`absolute right-2 top-2 rounded-md bg-black/60 px-2 py-0.5 text-xs font-semibold ${
-            tier === TIER_HD
-              ? "text-[color:var(--color-ok)]"
-              : tier === TIER_SD
-                ? "text-[color:var(--color-ink)]"
-                : "text-[color:var(--color-warn)]"
-          }`}
+          data-rx-height={tile === "remote" && rxHeight ? rxHeight : undefined}
+          title={badgeTitle}
+          className={`absolute right-2 top-2 rounded-md bg-black/60 px-2 py-0.5 text-xs font-semibold ${badgeTone}`}
         >
           {tierPrefix}
-          {TIER_PROFILES[tier].label}
+          {badge}
         </span>
       )}
     </div>
@@ -318,6 +371,7 @@ export function CallScreen({
           refreshKey={call.streamEpoch}
           tier={call.state === "connected" ? call.localTier : undefined}
           tierPrefix="Enviando: "
+          report={call.localReport}
         />
 
         {waiting ? (

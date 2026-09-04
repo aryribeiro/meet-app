@@ -7,7 +7,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { SignalingChannel, endRoom, type SignalPayload } from "./signaling";
 import { TypedChannel, type MediaStatePayload, type ProfilePayload } from "./channels";
 import { sasFromConnection } from "./sas";
-import { QualityMonitor, TIER_PROFILES, applyTierProfile, isQualityTier } from "./media";
+import {
+  QualityMonitor,
+  TIER_PROFILES,
+  applyTierProfile,
+  isQualityTier,
+  type SendReport,
+} from "./media";
 import { TIER_AUDIO_HD, TIER_HD, type QualityTier } from "@/lib/shared/constants";
 
 declare global {
@@ -17,6 +23,10 @@ declare global {
     __meetQA?: {
       forceTier: (tier: QualityTier | null) => void;
       getTier: () => QualityTier;
+      /** Última amostra do monitor: resolução enviada, razão de limitação, BWE, perda, RTT. */
+      getReport: () => SendReport | null;
+      /** Resolução/fps que a câmera está entregando (getSettings do track). */
+      getCapture: () => { width?: number; height?: number; frameRate?: number } | null;
       /** O que o encoder está aplicando de fato (prova de que setParameters pegou). */
       getEncodings: () => {
         video: { scale: number | undefined; maxBitrate: number | undefined } | null;
@@ -70,6 +80,8 @@ export interface UseWebRTCCallResult {
   localTier: QualityTier;
   /** Degrau em que o outro lado está enviando (derivado de `fallback` se ele for antigo). */
   remoteTier: QualityTier;
+  /** O que NOSSO encoder está mandando de fato (atualiza a cada 2 s). */
+  localReport: SendReport | null;
   toggleMic: () => void;
   toggleCam: () => Promise<void>;
   toggleSpeaker: () => void;
@@ -99,6 +111,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
   const [speakerOn, setSpeakerOn] = useState(true);
   const [localFallback, setLocalFallback] = useState(false);
   const [localTier, setLocalTier] = useState<QualityTier>(TIER_HD);
+  const [localReport, setLocalReport] = useState<SendReport | null>(null);
   const [streamEpoch, setStreamEpoch] = useState(0);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -331,15 +344,28 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     // Escada de qualidade: 720p → SD → só voz HD → voz básica, e volta um degrau
     // por vez, com histerese (limiares no constants.ts, definidos no contrato).
     // Só o que ENVIAMOS muda; o preview local segue em 720p.
-    const monitor = new QualityMonitor(pc, (tier) => {
-      setLocalTier(tier);
-      setLocalFallback(!TIER_PROFILES[tier].video);
-      void applyTierProfile(pc, args.localStream, tier, wantCamRef.current).then(sendMediaState);
-    });
+    const monitor = new QualityMonitor(
+      pc,
+      (tier) => {
+        setLocalTier(tier);
+        setLocalFallback(!TIER_PROFILES[tier].video);
+        void applyTierProfile(pc, args.localStream, tier, wantCamRef.current).then(sendMediaState);
+      },
+      (report) => {
+        if (!disposed) setLocalReport(report);
+      },
+    );
     monitorRef.current = monitor;
     window.__meetQA = {
       forceTier: (tier) => monitor.force(tier),
       getTier: () => monitor.tier,
+      getReport: () => monitor.lastReport,
+      getCapture: () => {
+        const t = args.localStream.getVideoTracks()[0];
+        if (!t) return null;
+        const s = t.getSettings();
+        return { width: s.width, height: s.height, frameRate: s.frameRate };
+      },
       getEncodings: () => {
         let video: { scale: number | undefined; maxBitrate: number | undefined } | null = null;
         let audio: { maxBitrate: number | undefined } | null = null;
@@ -536,6 +562,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     speakerOn,
     localFallback,
     localTier,
+    localReport,
     remoteTier: isQualityTier(remoteMedia.tier)
       ? remoteMedia.tier
       : remoteMedia.fallback

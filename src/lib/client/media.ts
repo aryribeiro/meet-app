@@ -1,8 +1,8 @@
 // Camada MEDIA: captura, perfis de envio (escada de qualidade) e monitor com
 // histerese. Limiares definidos ANTES do código (constants.ts; PROMPT.md emenda 3
 // estendida para 4 degraus no conselho de 2026-09-04).
-import { QualityLadder } from "@/lib/shared/ladder";
-export type { QualitySample } from "@/lib/shared/ladder";
+import { QualityLadder, type LimitReason, type QualitySample } from "@/lib/shared/ladder";
+export type { LimitReason, QualitySample } from "@/lib/shared/ladder";
 import {
   AUDIO_BITRATE_DEGRADED,
   AUDIO_BITRATE_NORMAL,
@@ -125,6 +125,12 @@ async function setEncoding(
   patch: { maxBitrate: number; scaleResolutionDownBy?: number },
 ): Promise<void> {
   const params = sender.getParameters();
+  if (patch.scaleResolutionDownBy !== undefined) {
+    // A ESCADA decide a resolução (720p ou 360p). Sob aperto de rede o navegador
+    // sacrifica quadros por segundo, não nitidez — para conversa gravada, um
+    // 720p a 15 fps vale mais que um 360p borrado a 30 fps. (Firefox ignora.)
+    params.degradationPreference = "maintain-resolution";
+  }
   if (!params.encodings || params.encodings.length === 0) {
     params.encodings = [{}];
   }
@@ -170,10 +176,31 @@ export async function applyTierProfile(
 
 // ——— Monitor (a escada pura vive em @/lib/shared/ladder) ———
 
+/** Fotografia do envio a cada amostra — o que está acontecendo DE FATO no
+ *  encoder, para o badge não mentir (a escada diz o que queremos; isto diz o que é). */
+export interface SendReport {
+  tier: QualityTier;
+  /** Altura do quadro que o encoder está mandando agora (ex.: 720, 360); null sem vídeo. */
+  sentHeight: number | null;
+  sentWidth: number | null;
+  fps: number | null;
+  limitedBy: LimitReason;
+  bweBps: number | null;
+  lossRatio: number;
+  rttMs: number;
+  /** Amostras boas seguidas exigidas para a próxima subida (anti pisca-pisca). */
+  samplesToRecover: number;
+}
+
+function toLimitReason(v: unknown): LimitReason {
+  return v === "bandwidth" || v === "cpu" || v === "none" ? v : v === undefined ? "none" : "other";
+}
+
 /**
  * Monitor: amostra getStats() a cada 2 s, alimenta a escada e avisa quando o
  * degrau muda. A métrica é o que o OUTRO lado reporta receber do que EU envio
- * (remote-inbound-rtp) + RTT do par de candidatos: cada lado adapta o próprio envio.
+ * (remote-inbound-rtp) + RTT e largura de banda estimada do par de candidatos +
+ * a razão de limitação declarada pelo encoder: cada lado adapta o próprio envio.
  */
 export class QualityMonitor {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -182,14 +209,20 @@ export class QualityMonitor {
   private lastPacketsLost = 0;
   /** QA: degrau travado à mão; a automação fica suspensa até soltar. */
   private frozen = false;
+  private last: SendReport | null = null;
 
   constructor(
     private readonly pc: RTCPeerConnection,
     private readonly onTier: (tier: QualityTier) => void,
+    private readonly onReport?: (report: SendReport) => void,
   ) {}
 
   get tier(): QualityTier {
     return this.ladder.tier;
+  }
+
+  get lastReport(): SendReport | null {
+    return this.last;
   }
 
   /** true quando o vídeo foi sacrificado (degraus 2 e 3). */
@@ -228,20 +261,37 @@ export class QualityMonitor {
       return;
     }
     let rttMs = 0;
+    let bwe: number | null = null;
     let packetsSent = 0;
     let packetsLost = 0;
+    let sentHeight: number | null = null;
+    let sentWidth: number | null = null;
+    let fps: number | null = null;
+    let limitedBy: LimitReason = "none";
 
     stats.forEach((report) => {
       const r = report as unknown as Record<string, unknown>;
-      if (r["type"] === "candidate-pair" && r["state"] === "succeeded") {
+      const type = r["type"];
+      if (type === "candidate-pair" && r["state"] === "succeeded") {
         const rtt = r["currentRoundTripTime"];
         if (typeof rtt === "number") rttMs = Math.max(rttMs, rtt * 1000);
+        const b = r["availableOutgoingBitrate"];
+        if (typeof b === "number") bwe = bwe === null ? b : Math.max(bwe, b);
       }
-      if (r["type"] === "outbound-rtp") {
+      if (type === "outbound-rtp") {
         const sent = r["packetsSent"];
         if (typeof sent === "number") packetsSent += sent;
+        if (r["kind"] === "video") {
+          const h = r["frameHeight"];
+          const w = r["frameWidth"];
+          const f = r["framesPerSecond"];
+          if (typeof h === "number" && h > 0) sentHeight = h;
+          if (typeof w === "number" && w > 0) sentWidth = w;
+          if (typeof f === "number") fps = Math.round(f);
+          limitedBy = toLimitReason(r["qualityLimitationReason"]);
+        }
       }
-      if (r["type"] === "remote-inbound-rtp") {
+      if (type === "remote-inbound-rtp") {
         const lost = r["packetsLost"];
         if (typeof lost === "number") packetsLost += lost;
       }
@@ -252,11 +302,34 @@ export class QualityMonitor {
     this.lastPacketsSent = packetsSent;
     this.lastPacketsLost = packetsLost;
     if (deltaSent < MIN_DELTA_PACKETS) return; // pouco tráfego novo: amostra é ruído
-    if (this.frozen) return;
 
     const lossRatio = Math.max(0, deltaLost) / (deltaSent + Math.max(0, deltaLost));
-    const next = this.ladder.feed({ lossRatio, rttMs });
-    if (next !== null) this.onTier(next);
+    // Sem vídeo saindo (degraus 2/3, câmera desligada) o encoder não é a razão.
+    const videoOut = TIER_PROFILES[this.ladder.tier].video && sentHeight !== null;
+    const sample: QualitySample = {
+      lossRatio,
+      rttMs,
+      bweBps: bwe ?? undefined,
+      limitedBy: videoOut ? limitedBy : "none",
+    };
+
+    if (!this.frozen) {
+      const next = this.ladder.feed(sample);
+      if (next !== null) this.onTier(next);
+    }
+
+    this.last = {
+      tier: this.ladder.tier,
+      sentHeight: videoOut ? sentHeight : null,
+      sentWidth: videoOut ? sentWidth : null,
+      fps: videoOut ? fps : null,
+      limitedBy: videoOut ? limitedBy : "none",
+      bweBps: bwe,
+      lossRatio,
+      rttMs,
+      samplesToRecover: this.ladder.samplesToRecover,
+    };
+    this.onReport?.(this.last);
   }
 }
 
