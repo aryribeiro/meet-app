@@ -247,18 +247,19 @@ export function CallScreen({
 
   return (
     <div className="flex min-h-dvh flex-col gap-3 p-3">
-      {/* Cabeçalho: título do app + estado da conversa */}
-      <header className="mx-auto flex w-full max-w-[1280px] items-center justify-between gap-3 px-1">
-        <div className="flex items-baseline gap-3">
-          <h1 className="text-xl font-bold tracking-tight">🎥 Meet App!</h1>
-          <span className="hidden text-sm text-[color:var(--color-ink-dim)] sm:inline">
+      {/* Cabeçalho: logo + slogan centralizados, no MESMO tamanho da home;
+          o estado da conversa fica discreto no canto, sem disputar com a marca. */}
+      <header className="relative mx-auto w-full max-w-[1280px] px-1 pt-4">
+        <div className="space-y-4 text-center">
+          <h1 className="text-5xl font-bold tracking-tight">🎥 Meet App!</h1>
+          <p className="text-sm font-semibold uppercase tracking-widest text-[color:var(--color-brand)]">
             Conversa Privada a Dois
-          </span>
+          </p>
         </div>
         {stateLabel && (
           <span
             data-call-state={call.state}
-            className={`rounded-full border border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-3 py-1 text-xs font-semibold ${stateLabel.tone}`}
+            className={`mx-auto mt-3 block w-fit rounded-full border border-[color:var(--color-line)] bg-[color:var(--color-panel)] px-3 py-1 text-xs font-semibold sm:absolute sm:right-1 sm:top-4 sm:mt-0 ${stateLabel.tone}`}
           >
             ● {stateLabel.text}
           </span>
