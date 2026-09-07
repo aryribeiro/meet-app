@@ -1,3 +1,5 @@
+<img width="1319" height="593" alt="meetapp" src="https://github.com/user-attachments/assets/1c73d93a-eadc-425d-86ca-3b81f5b7fc3a" />
+
 # 🎥 Meet App!
 
 **Conversa Privada a Dois** — chamadas de vídeo e voz entre **duas pessoas**, com
