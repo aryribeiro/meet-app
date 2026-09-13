@@ -77,7 +77,25 @@ try {
   await guest.waitForTimeout(1200);
   await host.screenshot({ path: `${OUT}/10-host-presenting-1280.png`, fullPage: true });
   await guest.screenshot({ path: `${OUT}/11-guest-sees-screen-390.png`, fullPage: true });
+  // Tela cheia (modo cinema): na apresentação (host) e no 50/50 (guest, celular).
+  await host.getByRole("button", { name: "Tela cheia" }).click();
+  await host.locator('[data-cinema="1"]').waitFor({ timeout: 5000 });
+  await host.waitForTimeout(500);
+  await host.screenshot({ path: `${OUT}/12-host-cinema-presenting-1280.png` });
+  await host.keyboard.press("Escape");
   await host.evaluate(() => window.__meetQA.stopScreen());
+  await guest.locator('[data-tile="screen-remote"]').waitFor({ state: "detached", timeout: 10000 });
+  await guest.getByRole("button", { name: "Tela cheia" }).click();
+  await guest.locator('[data-cinema="1"]').waitFor({ timeout: 5000 });
+  await guest.waitForTimeout(500);
+  await guest.screenshot({ path: `${OUT}/13-guest-cinema-390.png` });
+  await guest.keyboard.press("Escape");
+
+  // Home com o cartão de borda branca.
+  const home = await mk({ width: 1280, height: 800 });
+  await home.goto(`${BASE}/`);
+  await home.waitForTimeout(500);
+  await home.screenshot({ path: `${OUT}/14-home-1280.png` });
   console.log("capturas ok");
 } finally {
   await browser.close();

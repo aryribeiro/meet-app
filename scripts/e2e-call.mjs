@@ -442,6 +442,48 @@ async function main() {
       JSON.stringify({ pollingHost, pollingGuest }),
     );
 
+    // TELA CHEIA (modo cinema): só o palco, chat some, X e ESC devolvem o normal.
+    await guest.getByRole("button", { name: "Tela cheia" }).click();
+    await guest.locator('[data-cinema="1"]').waitFor({ timeout: 5000 });
+    const chatHidden = (await guest.locator("[data-chat-panel]").count()) === 0
+      || !(await guest.locator("[data-chat-panel]").first().isVisible());
+    const cinemaBox = await guest.locator('[data-cinema="1"]').boundingBox();
+    const vp = guest.viewportSize();
+    check(
+      "tela cheia: palco cobre a janela inteira e o chat some",
+      chatHidden && cinemaBox && Math.round(cinemaBox.width) === vp.width && Math.round(cinemaBox.height) === vp.height,
+      JSON.stringify({ chatHidden, cinemaBox, vp }),
+    );
+    await guest.getByRole("button", { name: "Sair da tela cheia" }).click();
+    await guest.locator('[data-cinema="1"]').waitFor({ state: "detached", timeout: 5000 });
+    await guest.locator("[data-chat-panel]").waitFor({ timeout: 5000 });
+    check("tela cheia: X devolve o layout normal com o chat", true);
+    await guest.getByRole("button", { name: "Tela cheia" }).click();
+    await guest.locator('[data-cinema="1"]').waitFor({ timeout: 5000 });
+    await guest.keyboard.press("Escape");
+    await guest.locator('[data-cinema="1"]').waitFor({ state: "detached", timeout: 5000 });
+    check("tela cheia: ESC devolve o layout normal", true);
+
+    // Tela cheia DURANTE a apresentação: tela grande em cima, câmeras embaixo.
+    await host.evaluate(() => window.__meetQA.shareTestScreen("#ff00ff"));
+    await guest.locator('[data-tile="screen-remote"] video').waitFor({ timeout: 15000 });
+    await guest.getByRole("button", { name: "Tela cheia" }).click();
+    await guest.locator('[data-cinema="1"] [data-screens]').waitFor({ timeout: 5000 });
+    const order = await guest.evaluate(() => {
+      const s = document.querySelector('[data-cinema="1"] [data-tile="screen-remote"]').getBoundingClientRect();
+      const c = document.querySelector('[data-cinema="1"] [data-tile="remote"]').getBoundingClientRect();
+      return { screenTop: s.top, screenH: s.height, camTop: c.top, camH: c.height };
+    });
+    check(
+      "tela cheia na apresentação: tela grande em cima, câmeras menores embaixo",
+      order.screenTop < order.camTop && order.screenH > order.camH,
+      JSON.stringify(order),
+    );
+    await guest.keyboard.press("Escape");
+    await guest.locator('[data-cinema="1"]').waitFor({ state: "detached", timeout: 5000 });
+    await host.evaluate(() => window.__meetQA.stopScreen());
+    await guest.locator('[data-tile="screen-remote"]').waitFor({ state: "detached", timeout: 10000 });
+
     // CELULAR EM PÉ ("bug dos 1280p"): o anfitrião troca a câmera por um quadro
     // 360×640; o convidado precisa rotular "360p" (menor lado), nunca "640p", e
     // mostrar o quadro inteiro (contain) em vez de cortado.
@@ -459,6 +501,22 @@ async function main() {
     await guest.getByRole("button", { name: /Encerrar a conversa/ }).click();
     await host.getByText("Conversa encerrada").waitFor({ timeout: 15000 });
     check("anfitrião soube do encerramento", true);
+    // Câmera e microfone DESLIGAM ao encerrar, nos dois lados (sem F5).
+    const trackStates = async (page) =>
+      page.evaluate(() => (window.__meetQA ? window.__meetQA.getLocalTrackStates() : null));
+    let statesHost = await trackStates(host);
+    let statesGuest = await trackStates(guest);
+    for (let i = 0; i < 20 && !(statesHost?.every((s) => s === "ended") && statesGuest?.every((s) => s === "ended")); i++) {
+      await host.waitForTimeout(300);
+      statesHost = await trackStates(host);
+      statesGuest = await trackStates(guest);
+    }
+    check(
+      "ao encerrar, câmera e microfone desligam nos dois lados",
+      Array.isArray(statesHost) && statesHost.length > 0 && statesHost.every((s) => s === "ended") &&
+        Array.isArray(statesGuest) && statesGuest.length > 0 && statesGuest.every((s) => s === "ended"),
+      JSON.stringify({ statesHost, statesGuest }),
+    );
 
     // O aviso de fim chega ao outro peer pelo canal direto ANTES de o HTTP de
     // encerramento completar — dá alguns segundos para o servidor registrar.

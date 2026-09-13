@@ -346,11 +346,58 @@ export function CallScreen({
   const presenting = !waiting && (call.localScreenStream !== null || call.remoteScreenStream !== null);
   const sharing = call.localScreenStream !== null;
 
+  // MODO TELA CHEIA ("cinema"): só o palco, cobrindo a janela inteira, em fundo
+  // preto — chat, arquivos, cabeçalho e barra somem. É um modo do PRÓPRIO app
+  // (funciona em PC, Android e iPhone, que não permite tela cheia nativa numa
+  // área com dois vídeos); por cima dele o app pede a tela cheia do navegador
+  // onde ela existe, para esconder a barra de endereço. Sai por ESC, pelo X ou
+  // pelo próprio navegador. Controles mínimos sobrepostos somem sozinhos.
+  const [cinema, setCinema] = useState(false);
+  const [cinemaControls, setCinemaControls] = useState(true);
+  const cinemaRef = useRef<HTMLDivElement | null>(null);
+  const cinemaHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pokeCinemaControls = () => {
+    setCinemaControls(true);
+    if (cinemaHideTimer.current) clearTimeout(cinemaHideTimer.current);
+    cinemaHideTimer.current = setTimeout(() => setCinemaControls(false), 3000);
+  };
+  const exitCinema = () => {
+    setCinema(false);
+    if (typeof document !== "undefined" && document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+  };
+  useEffect(() => {
+    if (!cinema) return;
+    const el = cinemaRef.current;
+    // Tela cheia nativa onde existir (PC/Android); se o navegador negar, o modo
+    // do app já cobre a janela.
+    if (el && typeof el.requestFullscreen === "function") {
+      void el.requestFullscreen().catch(() => undefined);
+    }
+    pokeCinemaControls();
+    const onFsChange = () => {
+      if (!document.fullscreenElement) setCinema(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") exitCinema();
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFsChange);
+      window.removeEventListener("keydown", onKey);
+      if (cinemaHideTimer.current) clearTimeout(cinemaHideTimer.current);
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cinema]);
+
   return (
     <div className="flex min-h-dvh flex-col gap-3 p-3">
       {/* Cabeçalho: logo + slogan centralizados, no MESMO tamanho da home;
           o estado da conversa fica discreto no canto, sem disputar com a marca. */}
-      <header className="relative mx-auto w-full max-w-[1280px] px-1 pt-4">
+      <header className="relative mx-auto w-full max-w-[1280px] px-1 pt-4" hidden={cinema}>
         <div className="space-y-4 text-center">
           <h1 className="text-5xl font-bold tracking-tight">🎥 Meet App!</h1>
           <p className="text-sm font-semibold uppercase tracking-widest text-[color:var(--color-brand)]">
@@ -368,7 +415,7 @@ export function CallScreen({
       </header>
 
       {/* Faixa de avisos: SAS + qualidade + reconexão */}
-      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-2">
+      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-2" hidden={cinema}>
         {call.state === "connected" && call.sas && !sasDismissed && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[color:var(--color-brand)] bg-[color:var(--color-brand-soft)]/40 px-4 py-3 text-sm">
             <p>
@@ -400,10 +447,28 @@ export function CallScreen({
         )}
       </div>
 
+      {/* Palco (e, em apresentação, as telas) — em modo cinema este invólucro vira
+          uma camada fixa cobrindo a janela; fora dele é transparente (contents). */}
+      <div
+        ref={cinemaRef}
+        data-cinema={cinema ? "1" : undefined}
+        onPointerMove={cinema ? pokeCinemaControls : undefined}
+        onPointerDown={cinema ? pokeCinemaControls : undefined}
+        className={
+          cinema
+            ? "fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-black p-3 pb-20"
+            : "contents"
+        }
+      >
       {/* Modo apresentação (estilo Meet): tela(s) grande(s) em cima, câmeras numa
           fileira menor embaixo. Parar devolve o palco 50/50 aprovado. */}
       {presenting && (
-        <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-3" data-screens>
+        <div
+          className={`mx-auto flex w-full flex-col gap-3 ${
+            cinema ? "max-w-[calc((80vh-8rem)*16/9)]" : "max-w-[1280px]"
+          }`}
+          data-screens
+        >
           {call.remoteScreenStream && (
             <ScreenTile
               stream={call.remoteScreenStream}
@@ -429,7 +494,13 @@ export function CallScreen({
         data-stage
         data-stage-mode={presenting ? "present" : "split"}
         className={`mx-auto grid w-full grid-cols-1 gap-3 sm:grid-cols-2 ${
-          presenting ? "max-w-[640px]" : "max-w-[1280px]"
+          presenting
+            ? cinema
+              ? "max-w-[min(640px,calc(20vh*32/9))]"
+              : "max-w-[640px]"
+            : cinema
+              ? "max-w-[calc((100vh-7rem)*32/9)]"
+              : "max-w-[1280px]"
         }`}
       >
         {/* Local (sempre muted: nunca ouvir a si mesmo) */}
@@ -471,8 +542,55 @@ export function CallScreen({
         )}
       </section>
 
+      {/* Sobreposições do modo cinema: X no canto + controles mínimos que somem */}
+      {cinema && (
+        <>
+          <button
+            type="button"
+            onClick={exitCinema}
+            aria-label="Sair da tela cheia"
+            title="Sair da tela cheia (ESC)"
+            className={`absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-xl text-white ring-1 ring-white/40 transition hover:bg-black/80 ${
+              cinemaControls ? "opacity-100" : "opacity-0"
+            }`}
+          >
+            ✕
+          </button>
+          <div
+            data-cinema-controls
+            className={`absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-3 rounded-full bg-black/60 px-3 py-2 ring-1 ring-white/20 transition ${
+              cinemaControls ? "opacity-100" : "pointer-events-none opacity-0"
+            }`}
+          >
+            <ControlButton
+              active={call.micOn}
+              onClick={call.toggleMic}
+              title={call.micOn ? "Desligar meu microfone" : "Ligar meu microfone"}
+            >
+              {call.micOn ? "🎙️" : "🔇"}
+            </ControlButton>
+            <ControlButton
+              active={call.camOn}
+              onClick={() => void call.toggleCam()}
+              title={call.camOn ? "Desligar minha câmera" : "Ligar minha câmera"}
+            >
+              {call.camOn ? "📹" : "🚫"}
+            </ControlButton>
+            <ControlButton
+              active
+              danger
+              onClick={() => void call.hangUp()}
+              title="Encerrar a conversa (o link deixa de funcionar)"
+            >
+              📞
+            </ControlButton>
+          </div>
+        </>
+      )}
+      </div>
+
       {/* Painel de dispositivos (⚙️) — troca a quente, sem derrubar a chamada */}
-      {showSettings && (
+      {showSettings && !cinema && (
         <div className="mx-auto w-full max-w-sm space-y-3 rounded-xl border border-[color:var(--color-line)] bg-[color:var(--color-panel)] p-4">
           <div className="flex items-center justify-between">
             <p className="font-semibold">Dispositivos</p>
@@ -500,8 +618,13 @@ export function CallScreen({
         </div>
       )}
 
-      {/* Barra de controles */}
-      <div className="flex items-center justify-center gap-3 pb-1 pt-1">
+      {/* Barra de controles (em modo cinema, só os controles sobrepostos existem) */}
+      <div className="flex items-center justify-center gap-3 pb-1 pt-1" hidden={cinema}>
+        {!waiting && (
+          <ControlButton active onClick={() => setCinema(true)} title="Tela cheia">
+            ⛶
+          </ControlButton>
+        )}
         <ControlButton
           active={call.micOn}
           onClick={call.toggleMic}
@@ -571,7 +694,7 @@ export function CallScreen({
 
       {/* Webchat — o espaço reservado abaixo do palco e dos controles (o botão de
           encerrar fica sempre à vista); altura fixa, o palco não muda de tamanho */}
-      {showChat && !waiting && (
+      {showChat && !waiting && !cinema && (
         <ChatPanel
           messages={call.chat}
           peerName={call.remoteProfile.name}

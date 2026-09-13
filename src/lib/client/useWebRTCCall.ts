@@ -62,6 +62,8 @@ declare global {
       /** QA: troca a câmera por um canvas de cor sólida com as dimensões dadas
        *  (ex.: 360×640 = celular em pé) pelo MESMO caminho da troca de dispositivo. */
       useCanvasCamera: (width: number, height: number, color: string) => Promise<boolean>;
+      /** Estado dos tracks locais (live/ended) — prova de que a câmera desligou ao encerrar. */
+      getLocalTrackStates: () => string[];
     };
   }
 }
@@ -184,6 +186,15 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
   }, []);
   // URLs de objeto dos arquivos recebidos: morrem com a chamada.
   const objectUrlsRef = useRef<string[]>([]);
+
+  // Fim da chamada (por qualquer motivo): câmera, microfone e tela DESLIGAM na
+  // hora — a luz da webcam apaga sem precisar de F5 (relato de campo 13/09).
+  useEffect(() => {
+    if (state === "ended" || state === "timeout" || state === "expired" || state === "p2p-failed") {
+      for (const t of args.localStream.getTracks()) t.stop();
+      screenTrackRef.current?.stop();
+    }
+  }, [state, args.localStream]);
   const [streamEpoch, setStreamEpoch] = useState(0);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -554,6 +565,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       isPolling: () => signaling.isPolling,
       sendRawFile: (name, size) =>
         channel.sendBlob("file", new Blob([new Uint8Array(size)]), { name }),
+      getLocalTrackStates: () => args.localStream.getTracks().map((t) => t.readyState),
       useCanvasCamera: async (width, height, color) => {
         const canvas = document.createElement("canvas");
         canvas.width = width;
@@ -876,12 +888,16 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
 
   const hangUp = useCallback(async () => {
     endedRef.current = true;
+    // Câmera e microfone apagam NA HORA do clique — antes de qualquer rede
+    // (as chamadas HTTP abaixo podem levar segundos).
+    for (const t of args.localStream.getTracks()) t.stop();
+    screenTrackRef.current?.stop();
     channelRef.current?.send("bye", {});
+    setState("ended");
     await signalingRef.current?.post({ kind: "bye" });
     await endRoom(args.roomId, args.token);
     pcRef.current?.close();
-    setState("ended");
-  }, [args.roomId, args.token]);
+  }, [args.roomId, args.token, args.localStream]);
 
   return {
     state,
