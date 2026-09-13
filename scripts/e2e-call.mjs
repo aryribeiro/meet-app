@@ -211,6 +211,18 @@ async function main() {
     const rawExe = await guest.locator('[data-chat-msg="peer"]', { hasText: "malware.exe" }).count();
     check("arquivo: receptor descarta .exe mesmo quando o remetente pula a checagem", rawExe === 0);
 
+    // ESPELHO: a prévia local NÃO é espelhada por padrão (texto da camisa certo
+    // na gravação); a opção no ⚙️ liga o espelho só na própria prévia.
+    const localMirrored = (page) =>
+      page.evaluate(() => document.querySelector('[data-tile="local"] video').classList.contains("mirror"));
+    check("espelho: prévia local sem espelho por padrão", (await localMirrored(host)) === false);
+    await host.getByRole("button", { name: "Escolher câmera e microfone" }).click();
+    await host.locator("[data-mirror-toggle]").check();
+    check("espelho: opção no ⚙️ liga o espelho na própria prévia", (await localMirrored(host)) === true);
+    await host.locator("[data-mirror-toggle]").uncheck();
+    await host.getByRole("button", { name: "Fechar dispositivos" }).click();
+    check("espelho: vídeo remoto nunca é espelhado", (await guest.evaluate(() => document.querySelector('[data-tile="remote"] video').classList.contains("mirror"))) === false);
+
     // Mute do microfone: o outro lado deve mostrar o indicador 🔇.
     await host.getByRole("button", { name: "Desligar meu microfone" }).click();
     await guest.locator("[title='Microfone desligado']").waitFor({ timeout: 10000 });

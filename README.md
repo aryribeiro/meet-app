@@ -60,6 +60,10 @@ com CGNAT) ↔ celular 5G, com vídeo e áudio nos dois sentidos via relay.
   nunca perde resolução na escada de qualidade, só bitrate.
 - **Fallback de foto nos dois sentidos** — câmera desligada (ou rede degradada) →
   o outro lado vê a foto; religou/melhorou → o vídeo volta sozinho (histerese).
+- **Sua imagem do jeito que o outro vê** — a prévia local não é espelhada por
+  padrão (textos e logos saem certos na gravação de tela); quem preferir se ver
+  como num espelho liga "Espelhar minha imagem" na pré-chamada ou no ⚙️. O vídeo
+  enviado nunca é espelhado.
 - **Seleção de câmera e microfone** — na pré-chamada e durante a reunião (painel
   ⚙️), com troca a quente via `replaceTrack` sem derrubar a chamada.
 - **Controles independentes** — mute do próprio mic, mute do som recebido,
@@ -123,7 +127,7 @@ o painel **obriga a troca** no primeiro login.
 | `npm run test:video` | Geometria em Node puro: 6 checks (720×1280 é 720p; retrato detectado) |
 | `npm run test:ladder` | Escada de qualidade em Node puro: 37 checks (descida, subida um a um, salto severo, RTT de relay, largura de banda com gate do encoder, CPU do aparelho, anti pisca-pisca adaptativo) |
 | `npm run test:handshake` | Dois peers simulados trocando offer/answer pelas rotas reais |
-| `npm run test:e2e` | **Chamada real** (2 browsers, mídia fake): 46 checks — SAS igual nos dois lados, pixels de vídeo fluindo, fallback de foto por cor, troca de dispositivo, mutes, **cada degrau da escada forçado e provado no encoder, na resolução que chega no outro lado (720p → 360p) e no badge**, **webchat (ida, volta, URL sem link, HTML hostil vira texto, 5000→2000)**, **apresentação de tela (pixels chegam nos dois sentidos, palco muda e volta, polling dorme de novo)**, **arquivos (bytes iguais por sha-256, exe recusado nos dois lados, nome hostil sanitizado)**, **tela cheia (cobre a janela, X e ESC devolvem, apresentação em cima)**, encerramento com câmera e microfone desligados |
+| `npm run test:e2e` | **Chamada real** (2 browsers, mídia fake): 49 checks — SAS igual nos dois lados, pixels de vídeo fluindo, fallback de foto por cor, troca de dispositivo, mutes, **cada degrau da escada forçado e provado no encoder, na resolução que chega no outro lado (720p → 360p) e no badge**, **webchat (ida, volta, URL sem link, HTML hostil vira texto, 5000→2000)**, **apresentação de tela (pixels chegam nos dois sentidos, palco muda e volta, polling dorme de novo)**, **arquivos (bytes iguais por sha-256, exe recusado nos dois lados, nome hostil sanitizado)**, **tela cheia (cobre a janela, X e ESC devolvem, apresentação em cima)**, encerramento com câmera e microfone desligados |
 | `STRESS=N npm run test:e2e` | O mesmo + N ciclos completos da escada nos dois lados ao mesmo tempo, vídeo vivo ao fim de cada ciclo |
 | `npm run qa:shots` | Capturas do palco (desktop e celular, espera, conectado, foto/inicial, badges) para QA visual |
 | `RELAY=1 npm run test:e2e` | O mesmo, com **relay-only forçado** — prova o caminho TURN de ponta a ponta |

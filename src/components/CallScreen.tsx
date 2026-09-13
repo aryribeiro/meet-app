@@ -20,6 +20,7 @@ import {
 } from "@/lib/client/media";
 import { TIER_AUDIO_HD, TIER_HD, TIER_SD, type QualityTier } from "@/lib/shared/constants";
 import { frameLines, isPortrait } from "@/lib/shared/video";
+import { MirrorToggle, useMirrorPreference } from "@/lib/client/mirror";
 import { Avatar } from "./Avatar";
 import { ChatPanel } from "./ChatPanel";
 import { DevicePicker } from "./DevicePicker";
@@ -298,6 +299,8 @@ export function CallScreen({
 }) {
   const [sasDismissed, setSasDismissed] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // Espelho só na PRÓPRIA prévia, desligado por padrão (o enviado nunca é espelhado).
+  const [mirror, setMirror] = useMirrorPreference();
   // Chat: aberto por padrão (o espaço abaixo do palco é dele); quando escondido,
   // conta o que chegou do outro lado desde então.
   const [showChat, setShowChat] = useState(true);
@@ -521,7 +524,7 @@ export function CallScreen({
           showVideo={localShowsVideo}
           name={localName}
           photoUrl={localPhotoUrl}
-          mirrored
+          mirrored={mirror}
           muted
           micOff={!call.micOn}
           label={`${localName} (você)`}
@@ -627,6 +630,7 @@ export function CallScreen({
           <p className="text-xs text-[color:var(--color-ink-dim)]">
             A troca acontece na hora, sem interromper a conversa.
           </p>
+          <MirrorToggle checked={mirror} onChange={setMirror} />
         </div>
       )}
 

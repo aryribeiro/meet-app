@@ -12,6 +12,7 @@ import {
 import { AVATAR_MAX_SIDE } from "@/lib/shared/constants";
 import { Avatar } from "./Avatar";
 import { DevicePicker } from "./DevicePicker";
+import { MirrorToggle, useMirrorPreference } from "@/lib/client/mirror";
 
 export interface PreCallResult {
   name: string;
@@ -38,6 +39,7 @@ export function PreCall({
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [withVideo, setWithVideo] = useState(true);
+  const [mirror, setMirror] = useMirrorPreference();
   const [relayOnly, setRelayOnly] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
@@ -139,7 +141,7 @@ export function PreCall({
             autoPlay
             playsInline
             muted
-            className="mirror aspect-video w-full object-cover"
+            className={`${mirror ? "mirror " : ""}aspect-video w-full object-cover`}
           />
         ) : (
           <div className="flex aspect-video w-full items-center justify-center">
@@ -147,6 +149,7 @@ export function PreCall({
           </div>
         )}
       </div>
+      {withVideo && stream && <MirrorToggle checked={mirror} onChange={setMirror} />}
       {mediaError && <p className="text-sm text-[color:var(--color-danger)]">{mediaError}</p>}
 
       <div className="flex gap-2">
