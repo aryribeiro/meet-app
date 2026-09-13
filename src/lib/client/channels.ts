@@ -27,6 +27,9 @@ export interface MediaStatePayload {
   tier?: number;
 }
 
+/** Webchat: type "chat" — modelo e validação em @/lib/shared/chat. */
+export type { ChatPayload } from "@/lib/shared/chat";
+
 export interface FileMetaPayload {
   id: string;
   /** Propósito do blob — o transporte não sabe que "avatar" é a foto de perfil. */

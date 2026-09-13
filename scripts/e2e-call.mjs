@@ -138,6 +138,44 @@ async function main() {
     await host.getByText("Bruno", { exact: false }).first().waitFor({ timeout: 15000 });
     check("nomes trocados via canal direto", true);
 
+    // WEBCHAT pelo canal direto: ida, volta, HTML hostil vira texto, teto de tamanho.
+    const chatBox = (page) => page.getByRole("textbox", { name: "Mensagem" });
+    await chatBox(host).fill("oi Bruno, link: https://exemplo.com/x");
+    await chatBox(host).press("Enter");
+    await guest.getByText("oi Bruno, link: https://exemplo.com/x").waitFor({ timeout: 10000 });
+    check("chat: mensagem do anfitrião chegou ao convidado", true);
+    const linkCount = await guest.locator('[data-chat-panel] a').count();
+    check("chat: URL aparece como texto, sem virar link clicável", linkCount === 0);
+
+    await chatBox(guest).fill("recebi!");
+    await chatBox(guest).press("Enter");
+    await host.getByText("recebi!").waitFor({ timeout: 10000 });
+    check("chat: resposta do convidado chegou ao anfitrião", true);
+
+    const hostile = '<img src=x onerror="document.title=\'pwned\'"><b>negrito</b>';
+    await chatBox(guest).fill(hostile);
+    await chatBox(guest).press("Enter");
+    await host.getByText(hostile, { exact: true }).waitFor({ timeout: 10000 });
+    const injected = await host.evaluate(() => ({
+      img: document.querySelectorAll("[data-chat-panel] img").length,
+      b: document.querySelectorAll("[data-chat-panel] b").length,
+      title: document.title,
+    }));
+    check(
+      "chat: HTML hostil vira texto literal (sem <img>/<b>, título intacto)",
+      injected.img === 0 && injected.b === 0 && !injected.title.includes("pwned"),
+      JSON.stringify(injected),
+    );
+
+    await chatBox(host).fill("x".repeat(5000));
+    await chatBox(host).press("Enter");
+    await guest.waitForFunction(
+      () => [...document.querySelectorAll("[data-chat-text]")].some((p) => p.textContent.length === 2000),
+      null,
+      { timeout: 10000 },
+    );
+    check("chat: 5000 caracteres chegam cortados em 2000", true);
+
     // Mute do microfone: o outro lado deve mostrar o indicador 🔇.
     await host.getByRole("button", { name: "Desligar meu microfone" }).click();
     await guest.locator("[title='Microfone desligado']").waitFor({ timeout: 10000 });
@@ -230,10 +268,24 @@ async function main() {
       `SD: convidado recebe ${Math.round(hdHeight / 2)}p de fato (era ${hdHeight}p)`,
       true,
     );
-    const rep = await host.evaluate(() => window.__meetQA.getReport());
+    // O relatório é amostrado a cada 2 s: esperar a amostra seguinte ao degrau novo.
+    let rep = null;
+    try {
+      await host.waitForFunction(
+        (h) => {
+          const r = window.__meetQA.getReport();
+          return r !== null && r.tier === 1 && r.sentHeight === h;
+        },
+        Math.round(hdHeight / 2),
+        { timeout: 10000 },
+      );
+      rep = await host.evaluate(() => window.__meetQA.getReport());
+    } catch {
+      rep = await host.evaluate(() => window.__meetQA.getReport());
+    }
     check(
       "SD: relatório do encoder do anfitrião reflete a altura enviada",
-      rep !== null && rep.sentHeight === Math.round(hdHeight / 2),
+      rep !== null && rep.tier === 1 && rep.sentHeight === Math.round(hdHeight / 2),
       JSON.stringify(rep),
     );
 

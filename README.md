@@ -39,6 +39,11 @@ com CGNAT) ↔ celular 5G, com vídeo e áudio nos dois sentidos via relay.
   mandando **de fato** e por que está limitado ("· rede", "· aparelho"); o tile
   remoto mostra a resolução que está **chegando**, lida do próprio vídeo. O
   preview local segue sempre em 720p.
+- **Mensagens de texto entre os dois** — painel abaixo do palco, pelo mesmo
+  canal direto ponta a ponta (nunca passa pelo servidor, nada fica guardado).
+  Só texto: o que o outro lado manda é validado (tamanho, caracteres de
+  controle) e mostrado como texto puro, sem links clicáveis; cada mensagem tem
+  "copiar". Botão 💬 esconde/mostra com contador de não lidas.
 - **Fallback de foto nos dois sentidos** — câmera desligada (ou rede degradada) →
   o outro lado vê a foto; religou/melhorou → o vídeo volta sozinho (histerese).
 - **Seleção de câmera e microfone** — na pré-chamada e durante a reunião (painel
@@ -71,7 +76,8 @@ com CGNAT) ↔ celular 5G, com vídeo e áudio nos dois sentidos via relay.
   - `src/lib/shared/ladder.ts` — a escada em si, máquina de estados pura
     (degrada: perda >8% ou RTT >400 ms ×3; severa: perda >20% pula para só voz;
     recupera: perda <2% e RTT <250 ms ×5, um degrau por vez);
-  - `sas.ts` — derivação do código de segurança.
+  - `sas.ts` — derivação do código de segurança;
+  - `src/lib/shared/chat.ts` — modelo e validação do webchat (puro, testável em Node).
 - `src/app/` — home, `/sala/[id]`, `/painel` (operador), `/privacidade`.
 
 ## Rodar localmente
@@ -97,9 +103,10 @@ o painel **obriga a troca** no primeiro login.
 |---|---|
 | `npm run typecheck` | TypeScript estrito sem erros |
 | `npm run test:api` | Rotas contra o Turso real: senha, vaga atômica, expiração, limpeza |
+| `npm run test:chat` | Webchat em Node puro: 18 checks (HTML vira texto, controle/bidi removidos por code point, teto de 2000, payload inválido descartado) |
 | `npm run test:ladder` | Escada de qualidade em Node puro: 37 checks (descida, subida um a um, salto severo, RTT de relay, largura de banda com gate do encoder, CPU do aparelho, anti pisca-pisca adaptativo) |
 | `npm run test:handshake` | Dois peers simulados trocando offer/answer pelas rotas reais |
-| `npm run test:e2e` | **Chamada real** (2 browsers, mídia fake): 22 checks — SAS igual nos dois lados, pixels de vídeo fluindo, fallback de foto por cor, troca de dispositivo, mutes, **cada degrau da escada forçado e provado no encoder, na resolução que chega no outro lado (720p → 360p) e no badge**, encerramento |
+| `npm run test:e2e` | **Chamada real** (2 browsers, mídia fake): 27 checks — SAS igual nos dois lados, pixels de vídeo fluindo, fallback de foto por cor, troca de dispositivo, mutes, **cada degrau da escada forçado e provado no encoder, na resolução que chega no outro lado (720p → 360p) e no badge**, **webchat (ida, volta, URL sem link, HTML hostil vira texto, 5000→2000)**, encerramento |
 | `STRESS=N npm run test:e2e` | O mesmo + N ciclos completos da escada nos dois lados ao mesmo tempo, vídeo vivo ao fim de cada ciclo |
 | `npm run qa:shots` | Capturas do palco (desktop e celular, espera, conectado, foto/inicial, badges) para QA visual |
 | `RELAY=1 npm run test:e2e` | O mesmo, com **relay-only forçado** — prova o caminho TURN de ponta a ponta |
@@ -145,6 +152,6 @@ Versão em linguagem leiga: [/privacidade](https://meet2026.vercel.app/privacida
 
 ## Roadmap (pontos de extensão já prontos na arquitetura)
 
-Chat de texto, envio de imagens/arquivos e apresentação de tela — todos P2P via
-DataChannel/tracks, entrando como handlers e painéis novos, sem retrabalho nas
-camadas de sinalização e transporte.
+Apresentação de tela e envio de arquivos dentro das mensagens — P2P via
+tracks/DataChannel, entrando como handlers e painéis novos, sem retrabalho nas
+camadas de sinalização e transporte. (Chat de texto: entregue na v1.6.0.)

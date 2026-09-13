@@ -20,6 +20,7 @@ import {
 } from "@/lib/client/media";
 import { TIER_AUDIO_HD, TIER_HD, TIER_SD, type QualityTier } from "@/lib/shared/constants";
 import { Avatar } from "./Avatar";
+import { ChatPanel } from "./ChatPanel";
 import { DevicePicker } from "./DevicePicker";
 
 function MediaTile({
@@ -261,6 +262,15 @@ export function CallScreen({
 }) {
   const [sasDismissed, setSasDismissed] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // Chat: aberto por padrão (o espaço abaixo do palco é dele); quando escondido,
+  // conta o que chegou do outro lado desde então.
+  const [showChat, setShowChat] = useState(true);
+  const [seenCount, setSeenCount] = useState(0);
+  const peerCount = call.chat.filter((m) => m.from === "peer").length;
+  const unread = showChat ? 0 : Math.max(0, peerCount - seenCount);
+  useEffect(() => {
+    if (showChat) setSeenCount(peerCount);
+  }, [showChat, peerCount]);
   const [devices, setDevices] = useState<{ cams: MediaDeviceOption[]; mics: MediaDeviceOption[] }>(
     { cams: [], mics: [] },
   );
@@ -455,6 +465,23 @@ export function CallScreen({
         >
           ⚙️
         </ControlButton>
+        <div className="relative">
+          <ControlButton
+            active
+            onClick={() => setShowChat((s) => !s)}
+            title={showChat ? "Esconder mensagens" : "Mostrar mensagens"}
+          >
+            💬
+          </ControlButton>
+          {unread > 0 && (
+            <span
+              data-chat-unread={unread}
+              className="absolute -right-1 -top-1 min-w-5 rounded-full bg-[color:var(--color-danger)] px-1.5 text-center text-xs font-bold text-white"
+            >
+              {unread}
+            </span>
+          )}
+        </div>
         <ControlButton
           active
           danger
@@ -464,6 +491,18 @@ export function CallScreen({
           📞
         </ControlButton>
       </div>
+
+      {/* Webchat — o espaço reservado abaixo do palco e dos controles (o botão de
+          encerrar fica sempre à vista); altura fixa, o palco não muda de tamanho */}
+      {showChat && !waiting && (
+        <ChatPanel
+          messages={call.chat}
+          peerName={call.remoteProfile.name}
+          canSend={call.state === "connected"}
+          onSend={call.sendChat}
+          onClose={() => setShowChat(false)}
+        />
+      )}
     </div>
   );
 }

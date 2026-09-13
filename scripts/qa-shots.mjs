@@ -53,6 +53,20 @@ try {
   await guest.waitForTimeout(500);
   await guest.screenshot({ path: `${OUT}/06-guest-sees-host-voice-only-390.png` });
   await host.screenshot({ path: `${OUT}/07-host-sending-voice-only-1280.png` });
+
+  // Webchat: duas mensagens e captura no celular (palco não pode encolher).
+  await host.evaluate(() => window.__meetQA.forceTier(0));
+  await guest.evaluate(() => window.__meetQA.forceTier(0));
+  const box = (p) => p.getByRole("textbox", { name: "Mensagem" });
+  await box(host).fill("Oi! Está me ouvindo bem? Segue o link: https://exemplo.com/pauta");
+  await box(host).press("Enter");
+  await guest.getByText("Segue o link").waitFor({ timeout: 10000 });
+  await box(guest).fill("Perfeito, ouço bem. Recebi o link.");
+  await box(guest).press("Enter");
+  await host.getByText("Recebi o link").waitFor({ timeout: 10000 });
+  await host.waitForTimeout(400);
+  await host.screenshot({ path: `${OUT}/08-host-chat-1280.png` });
+  await guest.screenshot({ path: `${OUT}/09-guest-chat-390.png`, fullPage: true });
   console.log("capturas ok");
 } finally {
   await browser.close();

@@ -14,7 +14,14 @@ import {
   isQualityTier,
   type SendReport,
 } from "./media";
-import { TIER_AUDIO_HD, TIER_HD, type QualityTier } from "@/lib/shared/constants";
+import { CHAT_MAX_MESSAGES, TIER_AUDIO_HD, TIER_HD, type QualityTier } from "@/lib/shared/constants";
+import {
+  newChatId,
+  parseChatPayload,
+  sanitizeChatText,
+  type ChatMessage,
+  type ChatPayload,
+} from "@/lib/shared/chat";
 
 declare global {
   interface Window {
@@ -82,6 +89,10 @@ export interface UseWebRTCCallResult {
   remoteTier: QualityTier;
   /** O que NOSSO encoder está mandando de fato (atualiza a cada 2 s). */
   localReport: SendReport | null;
+  /** Webchat: mensagens desta chamada (efêmeras, só em memória). */
+  chat: ChatMessage[];
+  /** Envia texto pelo canal direto. Devolve false se não havia nada a enviar. */
+  sendChat: (text: string) => boolean;
   toggleMic: () => void;
   toggleCam: () => Promise<void>;
   toggleSpeaker: () => void;
@@ -112,6 +123,13 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
   const [localFallback, setLocalFallback] = useState(false);
   const [localTier, setLocalTier] = useState<QualityTier>(TIER_HD);
   const [localReport, setLocalReport] = useState<SendReport | null>(null);
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const pushChat = useCallback((msg: ChatMessage) => {
+    setChat((prev) => {
+      const next = [...prev, msg];
+      return next.length > CHAT_MAX_MESSAGES ? next.slice(next.length - CHAT_MAX_MESSAGES) : next;
+    });
+  }, []);
   const [streamEpoch, setStreamEpoch] = useState(0);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -204,6 +222,12 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     channel.on("bye", () => {
       endedRef.current = true;
       setState("ended");
+    });
+    // Webchat: o que vem do outro lado é entrada hostil — validado em forma,
+    // tamanho e caracteres antes de tocar a tela; inválido é descartado em silêncio.
+    channel.on("chat", (payload) => {
+      const msg = parseChatPayload(payload);
+      if (msg) pushChat({ ...msg, from: "peer" });
     });
     channel.onFile("avatar", (_meta, blob) => {
       const url = URL.createObjectURL(blob);
@@ -457,6 +481,18 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     setSpeakerOn((s) => !s);
   }, []);
 
+  const sendChat = useCallback((raw: string): boolean => {
+    const text = sanitizeChatText(raw);
+    if (!text) return false;
+    const payload: ChatPayload = { id: newChatId(), text, at: Date.now() };
+    // Entrega honesta: "enviada" só se o canal estava aberto agora; a fila do
+    // TypedChannel só serve ao handshake inicial, não a uma reconexão.
+    const delivered = channelRef.current?.isOpen ?? false;
+    if (delivered) channelRef.current?.send("chat", payload);
+    pushChat({ ...payload, from: "me", delivered });
+    return true;
+  }, [pushChat]);
+
   /**
    * Troca de dispositivo a quente: captura o novo track, faz replaceTrack no
    * sender (sem renegociação — o outro lado nem percebe), preserva o estado de
@@ -563,6 +599,8 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     localFallback,
     localTier,
     localReport,
+    chat,
+    sendChat,
     remoteTier: isQualityTier(remoteMedia.tier)
       ? remoteMedia.tier
       : remoteMedia.fallback

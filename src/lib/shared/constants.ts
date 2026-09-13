@@ -101,3 +101,10 @@ export const BUFFERED_AMOUNT_LOW = 64 * 1024;
 
 /** Lado máximo da foto de perfil (redimensionada no cliente antes de enviar). */
 export const AVATAR_MAX_SIDE = 256;
+
+// ——— Webchat (texto puro pelo DataChannel; efêmero, nunca persistido) ———
+
+/** Teto de caracteres por mensagem — o que passar é cortado no envio e recusado no recebimento. */
+export const CHAT_MAX_CHARS = 2000;
+/** Mensagens mantidas em memória por chamada (as mais antigas saem). */
+export const CHAT_MAX_MESSAGES = 500;
