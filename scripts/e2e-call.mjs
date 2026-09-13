@@ -323,6 +323,9 @@ async function main() {
       rep !== null && rep.tier === 1 && rep.sentHeight === Math.round(hdHeight / 2),
       JSON.stringify(rep),
     );
+    // Badge local rotula pelo MENOR lado do quadro ("360p" agora), não pela altura crua.
+    await host.locator('[data-tile="local"] [data-tier="1"]', { hasText: `${Math.round(hdHeight / 2)}p` }).waitFor({ timeout: 10000 });
+    check(`badge local diz "${Math.round(hdHeight / 2)}p" no SD (menor lado do quadro)`, true);
 
     await forceTier(host, 2);
     await guest.locator('[data-tile="remote"] img').waitFor({ timeout: 10000 });
@@ -438,6 +441,19 @@ async function main() {
       !pollingHost && !pollingGuest,
       JSON.stringify({ pollingHost, pollingGuest }),
     );
+
+    // CELULAR EM PÉ ("bug dos 1280p"): o anfitrião troca a câmera por um quadro
+    // 360×640; o convidado precisa rotular "360p" (menor lado), nunca "640p", e
+    // mostrar o quadro inteiro (contain) em vez de cortado.
+    await host.evaluate(() => window.__meetQA.useCanvasCamera(360, 640, "#ffaa00"));
+    await guest.locator('[data-tile="remote"] [data-rx-height="360"]').waitFor({ timeout: 15000 });
+    const label640 = await guest.locator('[data-tile="remote"] [data-tier]', { hasText: "640p" }).count();
+    check('retrato: convidado rotula "360p" e nunca "640p"', label640 === 0);
+    await guest.locator('[data-tile="remote"] video[data-portrait="1"]').waitFor({ timeout: 10000 });
+    const fit = await guest.evaluate(() =>
+      getComputedStyle(document.querySelector('[data-tile="remote"] video')).objectFit,
+    );
+    check("retrato: quadro em pé é exibido inteiro (object-fit: contain)", fit === "contain", fit);
 
     // Encerramento pelo convidado: anfitrião deve ver a tela de fim e o link morrer.
     await guest.getByRole("button", { name: /Encerrar a conversa/ }).click();

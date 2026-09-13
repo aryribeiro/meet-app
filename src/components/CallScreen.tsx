@@ -19,6 +19,7 @@ import {
   type SendReport,
 } from "@/lib/client/media";
 import { TIER_AUDIO_HD, TIER_HD, TIER_SD, type QualityTier } from "@/lib/shared/constants";
+import { frameLines, isPortrait } from "@/lib/shared/video";
 import { Avatar } from "./Avatar";
 import { ChatPanel } from "./ChatPanel";
 import { DevicePicker } from "./DevicePicker";
@@ -65,17 +66,24 @@ function MediaTile({
     if (videoRef.current && stream) videoRef.current.srcObject = stream;
   }, [stream, refreshKey]);
 
-  // Tile remoto: a resolução que está CHEGANDO, lida do próprio <video> — a
-  // verdade, independente do que o outro lado acha que manda.
+  // Geometria do quadro que está no <video> (lida a cada 1 s):
+  // - remoto: a resolução que está CHEGANDO, pelo MENOR lado (720×1280 de um
+  //   celular em pé é 720p, não "1280p");
+  // - qualquer tile: quadro em pé é mostrado inteiro (contain), não cortado.
   const [rxHeight, setRxHeight] = useState<number | null>(null);
+  const [portrait, setPortrait] = useState(false);
   useEffect(() => {
-    if (tile !== "remote" || !showVideo) {
+    if (!showVideo) {
       setRxHeight(null);
+      setPortrait(false);
       return;
     }
     const read = () => {
+      const w = videoRef.current?.videoWidth ?? 0;
       const h = videoRef.current?.videoHeight ?? 0;
-      setRxHeight(h > 0 ? h : null);
+      const lines = frameLines(w, h);
+      setRxHeight(tile === "remote" && lines > 0 ? lines : null);
+      setPortrait(isPortrait(w, h));
     };
     read();
     const id = setInterval(read, 1000);
@@ -90,8 +98,8 @@ function MediaTile({
     if (!profile.video) {
       badge = profile.label;
     } else if (tile === "local") {
-      const h = report?.sentHeight ?? null;
-      badge = h ? `${h}p` : profile.label;
+      const lines = frameLines(report?.sentWidth ?? 0, report?.sentHeight ?? 0);
+      badge = lines > 0 ? `${lines}p` : profile.label;
       if (report?.limitedBy === "bandwidth") {
         badge += " · rede";
         badgeTitle = "Sua internet está limitando o vídeo que você envia";
@@ -127,9 +135,10 @@ function MediaTile({
         autoPlay
         playsInline
         muted={muted}
-        className={`${mirrored ? "mirror " : ""}h-full w-full rounded-xl object-cover transition-opacity ${
-          showVideo ? "" : "invisible"
-        } ${dimmed ? "opacity-40" : ""}`}
+        data-portrait={portrait ? "1" : undefined}
+        className={`${mirrored ? "mirror " : ""}h-full w-full rounded-xl transition-opacity ${
+          portrait ? "object-contain" : "object-cover"
+        } ${showVideo ? "" : "invisible"} ${dimmed ? "opacity-40" : ""}`}
       />
       {!showVideo && (
         <div className="absolute inset-0 flex items-center justify-center bg-[color:var(--color-panel-2)]">

@@ -59,6 +59,9 @@ declare global {
       isPolling: () => boolean;
       /** QA: manda um arquivo PULANDO a checagem do remetente — prova a guarda do receptor. */
       sendRawFile: (name: string, size: number) => Promise<boolean>;
+      /** QA: troca a câmera por um canvas de cor sólida com as dimensões dadas
+       *  (ex.: 360×640 = celular em pé) pelo MESMO caminho da troca de dispositivo. */
+      useCanvasCamera: (width: number, height: number, color: string) => Promise<boolean>;
     };
   }
 }
@@ -551,6 +554,24 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       isPolling: () => signaling.isPolling,
       sendRawFile: (name, size) =>
         channel.sendBlob("file", new Blob([new Uint8Array(size)]), { name }),
+      useCanvasCamera: async (width, height, color) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return false;
+        const paint = () => {
+          ctx.fillStyle = color;
+          ctx.fillRect(0, 0, width, height);
+        };
+        paint();
+        const timer = setInterval(paint, 100);
+        const stream = canvas.captureStream(10);
+        const newTrack = stream.getVideoTracks()[0];
+        if (!newTrack) return false;
+        newTrack.addEventListener("ended", () => clearInterval(timer));
+        return replaceTrackRef.current?.("video", newTrack) ?? false;
+      },
       getEncodings: () => {
         let video: { scale: number | undefined; maxBitrate: number | undefined } | null = null;
         let audio: { maxBitrate: number | undefined } | null = null;
@@ -761,36 +782,11 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
    * sender (sem renegociação — o outro lado nem percebe), preserva o estado de
    * mute/câmera desligada e derruba o track antigo.
    */
-  const switchDevice = useCallback(
-    async (kind: "audio" | "video", deviceId: string): Promise<boolean> => {
+  /** Coloca `newTrack` no lugar do track local do tipo (replaceTrack a quente,
+   *  sem renegociar quando já havia um); usado pela troca de dispositivo e pelo QA. */
+  const replaceLocalTrack = useCallback(
+    async (kind: "audio" | "video", newTrack: MediaStreamTrack): Promise<boolean> => {
       const pc = pcRef.current;
-      let captured: MediaStream;
-      try {
-        captured = await navigator.mediaDevices.getUserMedia(
-          kind === "audio"
-            ? {
-                audio: {
-                  deviceId: { exact: deviceId },
-                  echoCancellation: true,
-                  noiseSuppression: true,
-                  autoGainControl: true,
-                },
-              }
-            : {
-                video: {
-                  deviceId: { exact: deviceId },
-                  width: { ideal: 1280 },
-                  height: { ideal: 720 },
-                },
-              },
-        );
-      } catch {
-        return false; // dispositivo ocupado/removido — mantém o atual
-      }
-      const newTrack =
-        kind === "audio" ? captured.getAudioTracks()[0] : captured.getVideoTracks()[0];
-      if (!newTrack) return false;
-
       const old =
         kind === "audio"
           ? args.localStream.getAudioTracks()[0]
@@ -823,6 +819,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
           args.localStream,
           monitorRef.current?.tier ?? TIER_HD,
           wantCamRef.current,
+          screenTrackRef.current,
         );
       }
       setStreamEpoch((e) => e + 1);
@@ -830,6 +827,42 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       return true;
     },
     [args.localStream, sendMediaState],
+  );
+  const replaceTrackRef = useRef(replaceLocalTrack);
+  replaceTrackRef.current = replaceLocalTrack;
+
+  const switchDevice = useCallback(
+    async (kind: "audio" | "video", deviceId: string): Promise<boolean> => {
+      const pc = pcRef.current;
+      let captured: MediaStream;
+      try {
+        captured = await navigator.mediaDevices.getUserMedia(
+          kind === "audio"
+            ? {
+                audio: {
+                  deviceId: { exact: deviceId },
+                  echoCancellation: true,
+                  noiseSuppression: true,
+                  autoGainControl: true,
+                },
+              }
+            : {
+                video: {
+                  deviceId: { exact: deviceId },
+                  width: { ideal: 1280 },
+                  height: { ideal: 720 },
+                },
+              },
+        );
+      } catch {
+        return false; // dispositivo ocupado/removido — mantém o atual
+      }
+      const newTrack =
+        kind === "audio" ? captured.getAudioTracks()[0] : captured.getVideoTracks()[0];
+      if (!newTrack) return false;
+      return replaceLocalTrack(kind, newTrack);
+    },
+    [replaceLocalTrack],
   );
 
   const switchMic = useCallback(

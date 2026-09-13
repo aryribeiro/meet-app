@@ -1,6 +1,6 @@
 {
   "name": "meet-app",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,6 +10,7 @@
     "test:api": "node tests/api.test.mjs",
     "test:ladder": "node --import ./tests/_ts-hooks.mjs tests/ladder.test.mjs",
     "test:chat": "node --import ./tests/_ts-hooks.mjs tests/chat.test.mjs",
+    "test:video": "node --import ./tests/_ts-hooks.mjs tests/video.test.mjs",
     "test:handshake": "node scripts/handshake-sim.mjs",
     "test:e2e": "node scripts/e2e-call.mjs",
     "smoke:prod": "node tests/smoke-prod.mjs",
