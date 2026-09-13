@@ -1,6 +1,7 @@
 // E2E de chamada REAL: dois browsers (câmera/microfone falsos do Chromium),
 // anfitrião + convidado, conexão P2P de verdade, comparação dos códigos SAS dos
 // dois lados, mute e encerramento. Valida o que o teste de API não alcança.
+import { createHash } from "node:crypto";
 import { chromium } from "playwright";
 import { api, check, createRoomViaDb, loadEnv, summary } from "../tests/_helpers.mjs";
 
@@ -175,6 +176,40 @@ async function main() {
       { timeout: 10000 },
     );
     check("chat: 5000 caracteres chegam cortados em 2000", true);
+
+    // ARQUIVOS pelo canal direto: bytes iguais na chegada, recusas nos dois lados.
+    const fileInput = (page) => page.locator("input[type=file][data-chat-file]");
+    const payload = Buffer.alloc(200 * 1024);
+    for (let i = 0; i < payload.length; i++) payload[i] = (i * 31 + 7) & 0xff;
+    const expectedHash = createHash("sha256").update(payload).digest("hex");
+    await fileInput(host).setInputFiles({ name: "relatorio.png", mimeType: "image/png", buffer: payload });
+    await guest.locator('[data-chat-msg="peer"] a[download="relatorio.png"]').waitFor({ timeout: 20000 });
+    const sameBytes = await guest.evaluate(async (expected) => {
+      const a = document.querySelector('a[download="relatorio.png"]');
+      const buf = await (await fetch(a.href)).arrayBuffer();
+      const d = await crypto.subtle.digest("SHA-256", buf);
+      const hex = Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, "0")).join("");
+      return { same: hex === expected, size: buf.byteLength };
+    }, expectedHash);
+    check("arquivo: 200 KB chegaram no convidado com os MESMOS bytes (sha-256)", sameBytes.same, JSON.stringify(sameBytes));
+    await host.locator('[data-chat-msg="me"] [data-chat-file-status="done"]').waitFor({ timeout: 10000 });
+    check("arquivo: remetente marcou como enviado", true);
+
+    await fileInput(host).setInputFiles({ name: "ferramenta.exe", mimeType: "application/octet-stream", buffer: Buffer.alloc(10) });
+    await host.locator("[data-chat-notice]").waitFor({ timeout: 5000 });
+    const exeOnGuest = await guest.locator('[data-chat-msg="peer"]', { hasText: "ferramenta.exe" }).count();
+    check("arquivo: .exe recusado no remetente com aviso; nada chegou ao convidado", exeOnGuest === 0);
+
+    await fileInput(host).setInputFiles({ name: "evil<>.png", mimeType: "image/png", buffer: Buffer.alloc(1024) });
+    await guest.locator('[data-chat-msg="peer"] a[download="evil__.png"]').waitFor({ timeout: 15000 });
+    check("arquivo: nome hostil chega sanitizado (evil<>.png → evil__.png)", true);
+
+    // Guarda do RECEPTOR: o gancho de QA pula a checagem do remetente.
+    await host.evaluate(() => window.__meetQA.sendRawFile("malware.exe", 2048));
+    await host.evaluate(() => window.__meetQA.sendRawFile("gigante.zip", 1024)); // nome ok, tamanho ok → serve de sentinela
+    await guest.locator('[data-chat-msg="peer"] a[download="gigante.zip"]').waitFor({ timeout: 15000 });
+    const rawExe = await guest.locator('[data-chat-msg="peer"]', { hasText: "malware.exe" }).count();
+    check("arquivo: receptor descarta .exe mesmo quando o remetente pula a checagem", rawExe === 0);
 
     // Mute do microfone: o outro lado deve mostrar o indicador 🔇.
     await host.getByRole("button", { name: "Desligar meu microfone" }).click();

@@ -121,3 +121,22 @@ export const SCREEN_FRAME_RATE = 15;
 export const CHAT_MAX_CHARS = 2000;
 /** Mensagens mantidas em memória por chamada (as mais antigas saem). */
 export const CHAT_MAX_MESSAGES = 500;
+
+// ——— Arquivos no chat (DataChannel, purpose "file"; nunca persistido) ———
+
+/** Teto por arquivo — conferido ANTES de transmitir e ANTES de aceitar pedaços. */
+export const FILE_MAX_BYTES = 20 * 1024 * 1024;
+/** Allowlist por EXTENSÃO do nome sanitizado (o mime declarado não vale nada).
+ *  Fora daqui = recusado: tudo que um sistema executa ou um navegador roda. */
+export const FILE_ALLOWED_EXT: readonly string[] = [
+  // imagens de bitmap
+  "png", "jpg", "jpeg", "gif", "webp", "heic",
+  // documentos
+  "pdf", "txt", "md", "csv", "docx", "xlsx", "pptx", "odt", "ods", "odp",
+  // áudio e vídeo
+  "mp3", "wav", "m4a", "ogg", "mp4", "webm", "mov",
+  // compactados
+  "zip", "7z", "rar",
+];
+/** Nome de arquivo: tamanho máximo após sanitizar. */
+export const FILE_NAME_MAX = 120;

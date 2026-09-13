@@ -44,6 +44,10 @@ com CGNAT) ↔ celular 5G, com vídeo e áudio nos dois sentidos via relay.
   Só texto: o que o outro lado manda é validado (tamanho, caracteres de
   controle) e mostrado como texto puro, sem links clicáveis; cada mensagem tem
   "copiar". Botão 💬 esconde/mostra com contador de não lidas.
+- **Arquivos dentro das mensagens** — 📎 envia pelo mesmo canal direto (P2P,
+  nada no servidor, nada guardado). Aceita imagens, PDF, documentos, áudio,
+  vídeo e compactados até 20 MB; tudo o mais é recusado nos dois lados. Nome
+  sanitizado, progresso real, e o arquivo só é baixado, nunca aberto inline.
 - **Apresentar a tela** — botão 🖥️ (onde o navegador oferece captura de tela):
   a tela aparece grande para o outro lado e as duas câmeras encolhem para uma
   fileira embaixo, como no Google Meet; parar devolve o palco 50/50. A tela
@@ -109,10 +113,10 @@ o painel **obriga a troca** no primeiro login.
 |---|---|
 | `npm run typecheck` | TypeScript estrito sem erros |
 | `npm run test:api` | Rotas contra o Turso real: senha, vaga atômica, expiração, limpeza |
-| `npm run test:chat` | Webchat em Node puro: 18 checks (HTML vira texto, controle/bidi removidos por code point, teto de 2000, payload inválido descartado) |
+| `npm run test:chat` | Webchat e arquivos em Node puro: 34 checks (HTML vira texto, controle/bidi removidos por code point, teto de 2000, payload inválido descartado, nome de arquivo sanitizado, allowlist por extensão, teto de 20 MB) |
 | `npm run test:ladder` | Escada de qualidade em Node puro: 37 checks (descida, subida um a um, salto severo, RTT de relay, largura de banda com gate do encoder, CPU do aparelho, anti pisca-pisca adaptativo) |
 | `npm run test:handshake` | Dois peers simulados trocando offer/answer pelas rotas reais |
-| `npm run test:e2e` | **Chamada real** (2 browsers, mídia fake): 32 checks — SAS igual nos dois lados, pixels de vídeo fluindo, fallback de foto por cor, troca de dispositivo, mutes, **cada degrau da escada forçado e provado no encoder, na resolução que chega no outro lado (720p → 360p) e no badge**, **webchat (ida, volta, URL sem link, HTML hostil vira texto, 5000→2000)**, **apresentação de tela (pixels chegam nos dois sentidos, palco muda e volta, polling dorme de novo)**, encerramento |
+| `npm run test:e2e` | **Chamada real** (2 browsers, mídia fake): 37 checks — SAS igual nos dois lados, pixels de vídeo fluindo, fallback de foto por cor, troca de dispositivo, mutes, **cada degrau da escada forçado e provado no encoder, na resolução que chega no outro lado (720p → 360p) e no badge**, **webchat (ida, volta, URL sem link, HTML hostil vira texto, 5000→2000)**, **apresentação de tela (pixels chegam nos dois sentidos, palco muda e volta, polling dorme de novo)**, **arquivos (bytes iguais por sha-256, exe recusado nos dois lados, nome hostil sanitizado)**, encerramento |
 | `STRESS=N npm run test:e2e` | O mesmo + N ciclos completos da escada nos dois lados ao mesmo tempo, vídeo vivo ao fim de cada ciclo |
 | `npm run qa:shots` | Capturas do palco (desktop e celular, espera, conectado, foto/inicial, badges) para QA visual |
 | `RELAY=1 npm run test:e2e` | O mesmo, com **relay-only forçado** — prova o caminho TURN de ponta a ponta |
@@ -156,8 +160,9 @@ segurança lido em voz alta. O servidor vê apenas metadados de sinalização
 pacotes cifrados. Sem relay-only ativo, cada participante vê o IP do outro.
 Versão em linguagem leiga: [/privacidade](https://meet2026.vercel.app/privacidade).
 
-## Roadmap (pontos de extensão já prontos na arquitetura)
+## Roadmap
 
-Envio de arquivos dentro das mensagens — P2P via DataChannel, entrando como
-handler e painel novos, sem retrabalho nas camadas de sinalização e transporte.
-(Chat de texto: v1.6.0. Apresentação de tela: v1.7.0.)
+O roadmap de 04/09/2026 foi entregue por completo: chat de texto (v1.6.0),
+apresentação de tela (v1.7.0) e arquivos nas mensagens (v1.8.0). Os pontos de
+extensão continuam prontos: novos recursos entram como handlers do canal
+direto, tracks por propósito e painéis novos, sem retrabalho na sinalização.

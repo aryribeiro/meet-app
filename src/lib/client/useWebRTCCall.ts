@@ -27,6 +27,7 @@ import {
   type QualityTier,
 } from "@/lib/shared/constants";
 import {
+  checkFile,
   newChatId,
   parseChatPayload,
   sanitizeChatText,
@@ -56,6 +57,8 @@ declare global {
       stopScreen: () => void;
       /** Polling de sinalização ligado? Deve ser false em chamada estável. */
       isPolling: () => boolean;
+      /** QA: manda um arquivo PULANDO a checagem do remetente — prova a guarda do receptor. */
+      sendRawFile: (name: string, size: number) => Promise<boolean>;
     };
   }
 }
@@ -110,6 +113,8 @@ export interface UseWebRTCCallResult {
   chat: ChatMessage[];
   /** Envia texto pelo canal direto. Devolve false se não havia nada a enviar. */
   sendChat: (text: string) => boolean;
+  /** Envia um arquivo pelo canal direto (allowlist + teto conferidos antes). */
+  sendFile: (file: File) => Promise<{ ok: boolean; reason?: string }>;
   /** Apresentação de tela. `screenShareSupported` = o navegador tem getDisplayMedia. */
   screenShareSupported: boolean;
   localScreenStream: MediaStream | null;
@@ -171,6 +176,11 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       return next.length > CHAT_MAX_MESSAGES ? next.slice(next.length - CHAT_MAX_MESSAGES) : next;
     });
   }, []);
+  const patchChat = useCallback((id: string, patch: (m: ChatMessage) => ChatMessage) => {
+    setChat((prev) => prev.map((m) => (m.id === id ? patch(m) : m)));
+  }, []);
+  // URLs de objeto dos arquivos recebidos: morrem com a chamada.
+  const objectUrlsRef = useRef<string[]>([]);
   const [streamEpoch, setStreamEpoch] = useState(0);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -269,6 +279,31 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     channel.on("chat", (payload) => {
       const msg = parseChatPayload(payload);
       if (msg) pushChat({ ...msg, from: "peer" });
+    });
+    // Arquivos do outro lado: o cabeçalho passa pela MESMA checagem do remetente
+    // (nome sanitizado, extensão na allowlist, teto). Recusado = pedaços descartados.
+    channel.onFileGate("file", (meta) => {
+      if (typeof meta.id !== "string" || meta.id.length === 0 || meta.id.length > 32) return false;
+      const r = checkFile(typeof meta.name === "string" ? meta.name : "", meta.size);
+      if (!r.ok) return false;
+      pushChat({
+        id: `f-${meta.id}`,
+        text: r.name,
+        at: Date.now(),
+        from: "peer",
+        file: { size: meta.size, bytes: 0, status: "receiving" },
+      });
+      return true;
+    });
+    channel.onFileProgress("file", (meta, received) => {
+      patchChat(`f-${meta.id}`, (m) => (m.file ? { ...m, file: { ...m.file, bytes: received } } : m));
+    });
+    channel.onFile("file", (meta, blob) => {
+      const url = URL.createObjectURL(blob);
+      objectUrlsRef.current.push(url);
+      patchChat(`f-${meta.id}`, (m) =>
+        m.file ? { ...m, file: { ...m.file, bytes: meta.size, status: "done", url } } : m,
+      );
     });
     channel.onFile("avatar", (_meta, blob) => {
       const url = URL.createObjectURL(blob);
@@ -514,6 +549,8 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       },
       stopScreen: () => stopScreenShareRef.current?.(),
       isPolling: () => signaling.isPolling,
+      sendRawFile: (name, size) =>
+        channel.sendBlob("file", new Blob([new Uint8Array(size)]), { name }),
       getEncodings: () => {
         let video: { scale: number | undefined; maxBitrate: number | undefined } | null = null;
         let audio: { maxBitrate: number | undefined } | null = null;
@@ -551,6 +588,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       delete window.__meetQA;
       screenTrackRef.current?.stop();
       screenTrackRef.current = null;
+      for (const u of objectUrlsRef.current.splice(0)) URL.revokeObjectURL(u);
       monitor.stop();
       signaling.close();
       pc.close();
@@ -678,6 +716,34 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
   startScreenShareRef.current = startScreenShare;
   stopScreenShareRef.current = stopScreenShare;
 
+  const sendFile = useCallback(
+    async (file: File): Promise<{ ok: boolean; reason?: string }> => {
+      const r = checkFile(file.name, file.size);
+      if (!r.ok) return { ok: false, reason: r.reason };
+      const channel = channelRef.current;
+      if (!channel?.isOpen) return { ok: false, reason: "Sem conexão agora. Tente quando a conversa estabilizar." };
+      const id = newChatId();
+      pushChat({
+        id,
+        text: r.name,
+        at: Date.now(),
+        from: "me",
+        delivered: true,
+        file: { size: file.size, bytes: 0, status: "sending" },
+      });
+      const ok = await channel.sendBlob("file", file, {
+        name: r.name,
+        onProgress: (sent) =>
+          patchChat(id, (m) => (m.file ? { ...m, file: { ...m.file, bytes: sent } } : m)),
+      });
+      patchChat(id, (m) =>
+        m.file ? { ...m, file: { ...m.file, status: ok ? "done" : "failed", bytes: ok ? file.size : m.file.bytes } } : m,
+      );
+      return ok ? { ok: true } : { ok: false, reason: "A conexão caiu no meio do envio." };
+    },
+    [pushChat, patchChat],
+  );
+
   const sendChat = useCallback((raw: string): boolean => {
     const text = sanitizeChatText(raw);
     if (!text) return false;
@@ -798,6 +864,7 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     localReport,
     chat,
     sendChat,
+    sendFile,
     screenShareSupported,
     localScreenStream,
     remoteScreenStream,

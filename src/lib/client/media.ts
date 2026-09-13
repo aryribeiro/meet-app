@@ -196,6 +196,8 @@ export interface SendReport {
   rttMs: number;
   /** Amostras boas seguidas exigidas para a próxima subida (anti pisca-pisca). */
   samplesToRecover: number;
+  /** A mídia está passando por um relay TURN (conta na cota do relay). */
+  viaRelay: boolean;
 }
 
 function toLimitReason(v: unknown): LimitReason {
@@ -281,15 +283,22 @@ export class QualityMonitor {
     let fps: number | null = null;
     let limitedBy: LimitReason = "none";
 
-    // media-source id → trackIdentifier, para separar câmera de tela no outbound-rtp.
+    // media-source id → trackIdentifier, para separar câmera de tela no outbound-rtp;
+    // candidatos por id, para saber se o par em uso é relay.
     const sourceTrack = new Map<string, string>();
+    const candidateType = new Map<string, string>();
     stats.forEach((report) => {
       const r = report as unknown as Record<string, unknown>;
       if (r["type"] === "media-source" && typeof r["id"] === "string") {
         const t = r["trackIdentifier"];
         if (typeof t === "string") sourceTrack.set(r["id"], t);
       }
+      if ((r["type"] === "local-candidate" || r["type"] === "remote-candidate") && typeof r["id"] === "string") {
+        const t = r["candidateType"];
+        if (typeof t === "string") candidateType.set(r["id"], t);
+      }
     });
+    let viaRelay = false;
 
     stats.forEach((report) => {
       const r = report as unknown as Record<string, unknown>;
@@ -299,6 +308,9 @@ export class QualityMonitor {
         if (typeof rtt === "number") rttMs = Math.max(rttMs, rtt * 1000);
         const b = r["availableOutgoingBitrate"];
         if (typeof b === "number") bwe = bwe === null ? b : Math.max(bwe, b);
+        const lc = typeof r["localCandidateId"] === "string" ? candidateType.get(r["localCandidateId"]) : undefined;
+        const rc = typeof r["remoteCandidateId"] === "string" ? candidateType.get(r["remoteCandidateId"]) : undefined;
+        if (lc === "relay" || rc === "relay") viaRelay = true;
       }
       if (type === "outbound-rtp") {
         const sent = r["packetsSent"];
@@ -352,6 +364,7 @@ export class QualityMonitor {
       lossRatio,
       rttMs,
       samplesToRecover: this.ladder.samplesToRecover,
+      viaRelay,
     };
     this.onReport?.(this.last);
   }

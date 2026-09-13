@@ -64,6 +64,9 @@ try {
   await box(guest).fill("Perfeito, ouço bem. Recebi o link.");
   await box(guest).press("Enter");
   await host.getByText("Recebi o link").waitFor({ timeout: 10000 });
+  const bytes = Buffer.alloc(300 * 1024, 7);
+  await host.locator("input[type=file][data-chat-file]").setInputFiles({ name: "Pauta da entrevista.pdf", mimeType: "application/pdf", buffer: bytes });
+  await guest.locator('a[download="Pauta da entrevista.pdf"]').waitFor({ timeout: 20000 });
   await host.waitForTimeout(400);
   await host.screenshot({ path: `${OUT}/08-host-chat-1280.png` });
   await guest.screenshot({ path: `${OUT}/09-guest-chat-390.png`, fullPage: true });

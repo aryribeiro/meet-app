@@ -567,7 +567,9 @@ export function CallScreen({
           messages={call.chat}
           peerName={call.remoteProfile.name}
           canSend={call.state === "connected"}
+          viaRelay={call.localReport?.viaRelay ?? false}
           onSend={call.sendChat}
+          onSendFile={call.sendFile}
           onClose={() => setShowChat(false)}
         />
       )}
