@@ -89,6 +89,10 @@ try {
   await guest.locator('[data-cinema="1"]').waitFor({ timeout: 5000 });
   await guest.waitForTimeout(500);
   await guest.screenshot({ path: `${OUT}/13-guest-cinema-390.png` });
+  // Celular: controles escondidos até tocar no palco.
+  await guest.locator('[data-tile="local"]').tap().catch(() => guest.locator('[data-tile="local"]').click());
+  await guest.waitForTimeout(300);
+  await guest.screenshot({ path: `${OUT}/13b-guest-cinema-tapped-390.png` });
   await guest.keyboard.press("Escape");
 
   // Home com o cartão de borda branca.

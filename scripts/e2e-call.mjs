@@ -458,6 +458,25 @@ async function main() {
     await guest.locator('[data-cinema="1"]').waitFor({ state: "detached", timeout: 5000 });
     await guest.locator("[data-chat-panel]").waitFor({ timeout: 5000 });
     check("tela cheia: X devolve o layout normal com o chat", true);
+
+    // Celular (tela estreita): controles começam escondidos; tocar no palco mostra.
+    const vpBefore = guest.viewportSize();
+    await guest.setViewportSize({ width: 390, height: 844 });
+    await guest.getByRole("button", { name: "Tela cheia" }).click();
+    await guest.locator('[data-cinema="1"]').waitFor({ timeout: 5000 });
+    await guest.waitForTimeout(300);
+    const opacityHidden = await guest.evaluate(() => getComputedStyle(document.querySelector("[data-cinema-controls]")).opacity);
+    await guest.locator('[data-tile="local"]').click();
+    await guest.waitForTimeout(300);
+    const opacityShown = await guest.evaluate(() => getComputedStyle(document.querySelector("[data-cinema-controls]")).opacity);
+    check(
+      "tela cheia no celular: controles escondidos até tocar no palco",
+      opacityHidden === "0" && opacityShown === "1",
+      JSON.stringify({ opacityHidden, opacityShown }),
+    );
+    await guest.keyboard.press("Escape");
+    await guest.locator('[data-cinema="1"]').waitFor({ state: "detached", timeout: 5000 });
+    await guest.setViewportSize(vpBefore);
     await guest.getByRole("button", { name: "Tela cheia" }).click();
     await guest.locator('[data-cinema="1"]').waitFor({ timeout: 5000 });
     await guest.keyboard.press("Escape");

@@ -354,6 +354,17 @@ export function CallScreen({
   // pelo próprio navegador. Controles mínimos sobrepostos somem sozinhos.
   const [cinema, setCinema] = useState(false);
   const [cinemaControls, setCinemaControls] = useState(true);
+  // Celular (tela estreita): em tela cheia os controles começam ESCONDIDOS e só
+  // aparecem ao tocar no palco, como num player; o X fica sempre à vista porque
+  // não há ESC. No PC eles aparecem ao entrar e somem após 3 s parados.
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const apply = () => setNarrow(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
   const cinemaRef = useRef<HTMLDivElement | null>(null);
   const cinemaHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pokeCinemaControls = () => {
@@ -375,7 +386,8 @@ export function CallScreen({
     if (el && typeof el.requestFullscreen === "function") {
       void el.requestFullscreen().catch(() => undefined);
     }
-    pokeCinemaControls();
+    if (narrow) setCinemaControls(false);
+    else pokeCinemaControls();
     const onFsChange = () => {
       if (!document.fullscreenElement) setCinema(false);
     };
@@ -551,7 +563,7 @@ export function CallScreen({
             aria-label="Sair da tela cheia"
             title="Sair da tela cheia (ESC)"
             className={`absolute right-3 top-3 flex h-11 w-11 items-center justify-center rounded-full bg-black/60 text-xl text-white ring-1 ring-white/40 transition hover:bg-black/80 ${
-              cinemaControls ? "opacity-100" : "opacity-0"
+              cinemaControls || narrow ? "opacity-100" : "opacity-0"
             }`}
           >
             ✕
