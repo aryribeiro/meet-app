@@ -30,6 +30,13 @@ export interface MediaStatePayload {
 /** Webchat: type "chat" — modelo e validação em @/lib/shared/chat. */
 export type { ChatPayload } from "@/lib/shared/chat";
 
+/** Apresentação de tela: type "screen" — avisa ANTES do track qual fluxo é a tela. */
+export interface ScreenPayload {
+  on: boolean;
+  /** id do MediaStream da tela (o mesmo id chega no ontrack do outro lado). */
+  streamId: string;
+}
+
 export interface FileMetaPayload {
   id: string;
   /** Propósito do blob — o transporte não sabe que "avatar" é a foto de perfil. */

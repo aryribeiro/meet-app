@@ -7,6 +7,7 @@ import {
   AUDIO_BITRATE_DEGRADED,
   AUDIO_BITRATE_NORMAL,
   MIN_DELTA_PACKETS,
+  SCREEN_MAX_BITRATE,
   STATS_INTERVAL_MS,
   VIDEO_MAX_BITRATE,
   VIDEO_SD_MAX_BITRATE,
@@ -151,19 +152,24 @@ async function setEncoding(
 /**
  * Aplica o perfil de um degrau nos senders. `wantCam` = intenção do usuário
  * (câmera ligada); o degrau só pode DESLIGAR o vídeo, nunca ligar contra a vontade.
+ * `screenTrack` (apresentação de tela) tem perfil próprio: só o teto de bitrate
+ * cai com o degrau — a resolução nunca (texto a 360p é ilegível).
  */
 export async function applyTierProfile(
   pc: RTCPeerConnection,
   localStream: MediaStream,
   tier: QualityTier,
   wantCam: boolean,
+  screenTrack: MediaStreamTrack | null = null,
 ): Promise<void> {
   const profile = TIER_PROFILES[tier];
   const camTrack = localStream.getVideoTracks()[0];
   if (camTrack) camTrack.enabled = wantCam && profile.video;
   for (const sender of pc.getSenders()) {
     const kind = sender.track?.kind;
-    if (kind === "video") {
+    if (kind === "video" && screenTrack && sender.track === screenTrack) {
+      await setEncoding(sender, { maxBitrate: SCREEN_MAX_BITRATE[tier], scaleResolutionDownBy: 1 });
+    } else if (kind === "video") {
       await setEncoding(sender, {
         maxBitrate: profile.videoMaxBitrate,
         scaleResolutionDownBy: profile.videoScale,
@@ -210,6 +216,12 @@ export class QualityMonitor {
   /** QA: degrau travado à mão; a automação fica suspensa até soltar. */
   private frozen = false;
   private last: SendReport | null = null;
+  /** Track da tela compartilhada: seus outbound-rtp não entram no relatório da câmera. */
+  private screenTrackId: string | null = null;
+
+  setScreenTrackId(id: string | null): void {
+    this.screenTrackId = id;
+  }
 
   constructor(
     private readonly pc: RTCPeerConnection,
@@ -269,6 +281,16 @@ export class QualityMonitor {
     let fps: number | null = null;
     let limitedBy: LimitReason = "none";
 
+    // media-source id → trackIdentifier, para separar câmera de tela no outbound-rtp.
+    const sourceTrack = new Map<string, string>();
+    stats.forEach((report) => {
+      const r = report as unknown as Record<string, unknown>;
+      if (r["type"] === "media-source" && typeof r["id"] === "string") {
+        const t = r["trackIdentifier"];
+        if (typeof t === "string") sourceTrack.set(r["id"], t);
+      }
+    });
+
     stats.forEach((report) => {
       const r = report as unknown as Record<string, unknown>;
       const type = r["type"];
@@ -281,7 +303,9 @@ export class QualityMonitor {
       if (type === "outbound-rtp") {
         const sent = r["packetsSent"];
         if (typeof sent === "number") packetsSent += sent;
-        if (r["kind"] === "video") {
+        const src = typeof r["mediaSourceId"] === "string" ? sourceTrack.get(r["mediaSourceId"]) : undefined;
+        const isScreen = this.screenTrackId !== null && src === this.screenTrackId;
+        if (r["kind"] === "video" && !isScreen) {
           const h = r["frameHeight"];
           const w = r["frameWidth"];
           const f = r["framesPerSecond"];

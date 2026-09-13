@@ -67,6 +67,14 @@ try {
   await host.waitForTimeout(400);
   await host.screenshot({ path: `${OUT}/08-host-chat-1280.png` });
   await guest.screenshot({ path: `${OUT}/09-guest-chat-390.png`, fullPage: true });
+
+  // Apresentação de tela: anfitrião compartilha um canvas; captura nos dois lados.
+  await host.evaluate(() => window.__meetQA.shareTestScreen("#7c3aed"));
+  await guest.locator('[data-tile="screen-remote"] video').waitFor({ timeout: 15000 });
+  await guest.waitForTimeout(1200);
+  await host.screenshot({ path: `${OUT}/10-host-presenting-1280.png`, fullPage: true });
+  await guest.screenshot({ path: `${OUT}/11-guest-sees-screen-390.png`, fullPage: true });
+  await host.evaluate(() => window.__meetQA.stopScreen());
   console.log("capturas ok");
 } finally {
   await browser.close();

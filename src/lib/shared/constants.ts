@@ -102,6 +102,19 @@ export const BUFFERED_AMOUNT_LOW = 64 * 1024;
 /** Lado máximo da foto de perfil (redimensionada no cliente antes de enviar). */
 export const AVATAR_MAX_SIDE = 256;
 
+// ——— Apresentação de tela (track extra, propósito "screen") ———
+
+/** Teto de bitrate da TELA por degrau da escada. A tela nunca perde resolução
+ *  (texto a 360p é ilegível); perde bitrate e quadros por segundo. */
+export const SCREEN_MAX_BITRATE: Record<QualityTier, number> = {
+  0: 1_500_000,
+  1: 800_000,
+  2: 300_000,
+  3: 150_000,
+};
+/** Quadros por segundo pedidos na captura de tela (conteúdo estático não precisa de 30). */
+export const SCREEN_FRAME_RATE = 15;
+
 // ——— Webchat (texto puro pelo DataChannel; efêmero, nunca persistido) ———
 
 /** Teto de caracteres por mensagem — o que passar é cortado no envio e recusado no recebimento. */

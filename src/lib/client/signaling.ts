@@ -53,6 +53,11 @@ export class SignalingChannel {
   }
 
   /** Liga o polling (idempotente). */
+  /** Polling ligado agora? (QA: prova que voltou a dormir após renegociar) */
+  get isPolling(): boolean {
+    return this.polling;
+  }
+
   wake(): void {
     if (this.closed || this.polling) return;
     this.polling = true;

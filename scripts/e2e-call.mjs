@@ -340,6 +340,70 @@ async function main() {
       await Promise.all([forceTier(host, null), forceTier(guest, null)]);
     }
 
+    // APRESENTAÇÃO DE TELA: o gancho de QA compartilha um canvas de cor sólida
+    // pelo MESMO caminho do getDisplayMedia; o outro lado precisa receber os
+    // pixels (desenha o vídeo remoto num canvas e lê o centro) e mudar o palco.
+    async function screenPixel(page) {
+      return page.evaluate(async () => {
+        const v = document.querySelector('[data-tile="screen-remote"] video');
+        if (!v) return null;
+        for (let i = 0; i < 40 && v.videoWidth === 0; i++) await new Promise((r) => setTimeout(r, 250));
+        const c = document.createElement("canvas");
+        c.width = v.videoWidth;
+        c.height = v.videoHeight;
+        const ctx = c.getContext("2d");
+        ctx.drawImage(v, 0, 0);
+        const [r, g, b] = ctx.getImageData(Math.floor(c.width / 2), Math.floor(c.height / 2), 1, 1).data;
+        return { r, g, b, w: c.width, h: c.height };
+      });
+    }
+    const isMagenta = (p) => p !== null && p.r > 200 && p.g < 80 && p.b > 200;
+    const isCyan = (p) => p !== null && p.r < 80 && p.g > 200 && p.b > 200;
+
+    await host.evaluate(() => window.__meetQA.shareTestScreen("#ff00ff"));
+    await guest.locator('[data-tile="screen-remote"] video').waitFor({ timeout: 15000 });
+    await guest.locator('[data-stage-mode="present"]').waitFor({ timeout: 5000 });
+    check("tela: palco do convidado mudou para o modo apresentação", true);
+    let px = null;
+    for (let i = 0; i < 20 && !isMagenta(px); i++) {
+      px = await screenPixel(guest);
+      if (!isMagenta(px)) await guest.waitForTimeout(500);
+    }
+    check("tela: pixels da tela do anfitrião (magenta) chegaram no convidado", isMagenta(px), JSON.stringify(px));
+
+    await host.getByRole("button", { name: "Parar de apresentar" }).click();
+    await guest.locator('[data-tile="screen-remote"]').waitFor({ state: "detached", timeout: 10000 });
+    await guest.locator('[data-stage-mode="split"]').waitFor({ timeout: 5000 });
+    check("tela: parar devolveu o palco 50/50 no convidado", true);
+
+    await guest.evaluate(() => window.__meetQA.shareTestScreen("#00ffff"));
+    await host.locator('[data-tile="screen-remote"] video').waitFor({ timeout: 15000 });
+    px = null;
+    for (let i = 0; i < 20 && !isCyan(px); i++) {
+      px = await screenPixel(host);
+      if (!isCyan(px)) await host.waitForTimeout(500);
+    }
+    check("tela: pixels da tela do convidado (ciano) chegaram no anfitrião", isCyan(px), JSON.stringify(px));
+    await guest.getByRole("button", { name: "Parar de apresentar" }).click();
+    await host.locator('[data-tile="screen-remote"]').waitFor({ state: "detached", timeout: 10000 });
+
+    // Depois de renegociar, o polling de sinalização tem de voltar a DORMIR nos
+    // dois lados (contrato: nunca polling infinito consumindo o free tier).
+    let pollingHost = true;
+    let pollingGuest = true;
+    for (let i = 0; i < 16 && (pollingHost || pollingGuest); i++) {
+      await host.waitForTimeout(500);
+      [pollingHost, pollingGuest] = await Promise.all([
+        host.evaluate(() => window.__meetQA.isPolling()),
+        guest.evaluate(() => window.__meetQA.isPolling()),
+      ]);
+    }
+    check(
+      "tela: polling voltou a dormir nos dois lados após as renegociações",
+      !pollingHost && !pollingGuest,
+      JSON.stringify({ pollingHost, pollingGuest }),
+    );
+
     // Encerramento pelo convidado: anfitrião deve ver a tela de fim e o link morrer.
     await guest.getByRole("button", { name: /Encerrar a conversa/ }).click();
     await host.getByText("Conversa encerrada").waitFor({ timeout: 15000 });

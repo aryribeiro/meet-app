@@ -5,7 +5,12 @@
 // polling (dorme quando conecta — contrato).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SignalingChannel, endRoom, type SignalPayload } from "./signaling";
-import { TypedChannel, type MediaStatePayload, type ProfilePayload } from "./channels";
+import {
+  TypedChannel,
+  type MediaStatePayload,
+  type ProfilePayload,
+  type ScreenPayload,
+} from "./channels";
 import { sasFromConnection } from "./sas";
 import {
   QualityMonitor,
@@ -14,7 +19,13 @@ import {
   isQualityTier,
   type SendReport,
 } from "./media";
-import { CHAT_MAX_MESSAGES, TIER_AUDIO_HD, TIER_HD, type QualityTier } from "@/lib/shared/constants";
+import {
+  CHAT_MAX_MESSAGES,
+  SCREEN_FRAME_RATE,
+  TIER_AUDIO_HD,
+  TIER_HD,
+  type QualityTier,
+} from "@/lib/shared/constants";
 import {
   newChatId,
   parseChatPayload,
@@ -39,6 +50,12 @@ declare global {
         video: { scale: number | undefined; maxBitrate: number | undefined } | null;
         audio: { maxBitrate: number | undefined } | null;
       };
+      /** QA: compartilha um canvas de cor sólida como se fosse a tela (mesmo caminho
+       *  do getDisplayMedia, menos o diálogo do navegador). */
+      shareTestScreen: (color: string) => Promise<void>;
+      stopScreen: () => void;
+      /** Polling de sinalização ligado? Deve ser false em chamada estável. */
+      isPolling: () => boolean;
     };
   }
 }
@@ -93,6 +110,13 @@ export interface UseWebRTCCallResult {
   chat: ChatMessage[];
   /** Envia texto pelo canal direto. Devolve false se não havia nada a enviar. */
   sendChat: (text: string) => boolean;
+  /** Apresentação de tela. `screenShareSupported` = o navegador tem getDisplayMedia. */
+  screenShareSupported: boolean;
+  localScreenStream: MediaStream | null;
+  remoteScreenStream: MediaStream | null;
+  /** Abre o diálogo do navegador (ou usa `stream` se dado) e envia a tela. false = cancelado/negado. */
+  startScreenShare: (stream?: MediaStream) => Promise<boolean>;
+  stopScreenShare: () => void;
   toggleMic: () => void;
   toggleCam: () => Promise<void>;
   toggleSpeaker: () => void;
@@ -124,6 +148,23 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
   const [localTier, setLocalTier] = useState<QualityTier>(TIER_HD);
   const [localReport, setLocalReport] = useState<SendReport | null>(null);
   const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [screenShareSupported, setScreenShareSupported] = useState(false);
+  const [localScreenStream, setLocalScreenStream] = useState<MediaStream | null>(null);
+  const [remoteScreenStream, setRemoteScreenStream] = useState<MediaStream | null>(null);
+  const screenTrackRef = useRef<MediaStreamTrack | null>(null);
+  const screenSenderRef = useRef<RTCRtpSender | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  // Fluxos remotos: o id do fluxo da câmera, o id anunciado como tela e os que
+  // chegaram antes do anúncio (a ordem entre DataChannel e ontrack não é garantida).
+  const remoteCamIdRef = useRef<string | null>(null);
+  const remoteScreenIdRef = useRef<string | null>(null);
+  const pendingRemoteRef = useRef(new Map<string, MediaStream>());
+  useEffect(() => {
+    setScreenShareSupported(
+      typeof navigator !== "undefined" &&
+        typeof navigator.mediaDevices?.getDisplayMedia === "function",
+    );
+  }, []);
   const pushChat = useCallback((msg: ChatMessage) => {
     setChat((prev) => {
       const next = [...prev, msg];
@@ -246,13 +287,72 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
 
     pc.ontrack = (ev) => {
       const stream = ev.streams[0];
-      if (stream) setRemoteStream(stream);
+      if (!stream) return;
+      if (stream.id === remoteScreenIdRef.current) {
+        setRemoteScreenStream(stream);
+        return;
+      }
+      if (remoteCamIdRef.current === null || stream.id === remoteCamIdRef.current) {
+        remoteCamIdRef.current = stream.id;
+        setRemoteStream(stream);
+        return;
+      }
+      // Fluxo extra ainda sem propósito anunciado: guarda até a mensagem "screen".
+      pendingRemoteRef.current.set(stream.id, stream);
+    };
+    channel.on("screen", (payload) => {
+      const p = payload as ScreenPayload;
+      if (typeof p?.streamId !== "string") return;
+      if (p.on) {
+        remoteScreenIdRef.current = p.streamId;
+        const pending = pendingRemoteRef.current.get(p.streamId);
+        if (pending) {
+          pendingRemoteRef.current.delete(p.streamId);
+          setRemoteScreenStream(pending);
+        }
+      } else if (remoteScreenIdRef.current === p.streamId) {
+        remoteScreenIdRef.current = null;
+        pendingRemoteRef.current.delete(p.streamId);
+        setRemoteScreenStream(null);
+      }
+    });
+
+    // ——— Renegociação com polling que dorme ———
+    // Depois de conectar, o polling DORME nos dois lados. Quem vai renegociar
+    // (tela, câmera tardia) avisa o outro pelo canal direto ("wake") para ele
+    // voltar a buscar sinalização; quando a negociação estabiliza, os dois
+    // voltam a dormir após uma folga (candidates do m-line novo).
+    let sleepTimer: ReturnType<typeof setTimeout> | null = null;
+    const cancelSleep = () => {
+      if (sleepTimer) {
+        clearTimeout(sleepTimer);
+        sleepTimer = null;
+      }
+    };
+    const scheduleSleep = () => {
+      cancelSleep();
+      sleepTimer = setTimeout(() => {
+        sleepTimer = null;
+        if (!disposed && pc.connectionState === "connected" && pc.signalingState === "stable") {
+          signaling.sleep();
+        }
+      }, 3000);
+    };
+    channel.on("wake", () => {
+      cancelSleep();
+      signaling.wake();
+    });
+    pc.onsignalingstatechange = () => {
+      if (pc.signalingState === "stable" && everConnectedRef.current) scheduleSleep();
+      else cancelSleep();
     };
 
     // ——— Perfect negotiation (padrão W3C) ———
     pc.onnegotiationneeded = async () => {
       try {
         makingOffer = true;
+        if (everConnectedRef.current) channel.send("wake", {}); // acorda o polling do outro lado
+        cancelSleep();
         await pc.setLocalDescription();
         signaling.wake(); // renegociação reabre o polling
         if (pc.localDescription) {
@@ -373,7 +473,13 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
       (tier) => {
         setLocalTier(tier);
         setLocalFallback(!TIER_PROFILES[tier].video);
-        void applyTierProfile(pc, args.localStream, tier, wantCamRef.current).then(sendMediaState);
+        void applyTierProfile(
+          pc,
+          args.localStream,
+          tier,
+          wantCamRef.current,
+          screenTrackRef.current,
+        ).then(sendMediaState);
       },
       (report) => {
         if (!disposed) setLocalReport(report);
@@ -390,6 +496,24 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
         const s = t.getSettings();
         return { width: s.width, height: s.height, frameRate: s.frameRate };
       },
+      shareTestScreen: async (color) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 640;
+        canvas.height = 360;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        const paint = () => {
+          ctx.fillStyle = color;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+        };
+        paint();
+        const timer = setInterval(paint, 100); // quadros novos para o encoder ter o que mandar
+        const stream = canvas.captureStream(10);
+        stream.getVideoTracks()[0]?.addEventListener("ended", () => clearInterval(timer));
+        await startScreenShareRef.current?.(stream);
+      },
+      stopScreen: () => stopScreenShareRef.current?.(),
+      isPolling: () => signaling.isPolling,
       getEncodings: () => {
         let video: { scale: number | undefined; maxBitrate: number | undefined } | null = null;
         let audio: { maxBitrate: number | undefined } | null = null;
@@ -422,8 +546,11 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     return () => {
       disposed = true;
       if (connectWatchdog) clearTimeout(connectWatchdog);
+      cancelSleep();
       window.removeEventListener("pagehide", onPageHide);
       delete window.__meetQA;
+      screenTrackRef.current?.stop();
+      screenTrackRef.current = null;
       monitor.stop();
       signaling.close();
       pc.close();
@@ -480,6 +607,76 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
   const toggleSpeaker = useCallback(() => {
     setSpeakerOn((s) => !s);
   }, []);
+
+  // ——— Apresentação de tela ———
+  const stopScreenShare = useCallback(() => {
+    const track = screenTrackRef.current;
+    const stream = screenStreamRef.current;
+    const sender = screenSenderRef.current;
+    if (!track || !stream) return;
+    screenTrackRef.current = null;
+    screenStreamRef.current = null;
+    screenSenderRef.current = null;
+    channelRef.current?.send("screen", { on: false, streamId: stream.id } satisfies ScreenPayload);
+    try {
+      if (sender) pcRef.current?.removeTrack(sender); // renegociação coberta pelo perfect negotiation
+    } catch {
+      // conexão já fechada
+    }
+    track.stop();
+    monitorRef.current?.setScreenTrackId(null);
+    setLocalScreenStream(null);
+  }, []);
+
+  const startScreenShare = useCallback(
+    async (given?: MediaStream): Promise<boolean> => {
+      const pc = pcRef.current;
+      if (!pc || screenTrackRef.current) return false;
+      let stream = given ?? null;
+      if (!stream) {
+        try {
+          stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { frameRate: { ideal: SCREEN_FRAME_RATE, max: 30 } },
+            audio: false,
+          });
+        } catch {
+          return false; // cancelou o diálogo ou o navegador negou
+        }
+      }
+      const track = stream.getVideoTracks()[0];
+      if (!track) return false;
+      // Texto e janelas: privilegiar nitidez sobre movimento.
+      try {
+        track.contentHint = "detail";
+      } catch {
+        // navegador sem contentHint — segue sem
+      }
+      screenTrackRef.current = track;
+      screenStreamRef.current = stream;
+      // Anunciar ANTES do track: o outro lado casa o id no ontrack.
+      channelRef.current?.send("screen", { on: true, streamId: stream.id } satisfies ScreenPayload);
+      screenSenderRef.current = pc.addTrack(track, stream);
+      monitorRef.current?.setScreenTrackId(track.id);
+      void applyTierProfile(
+        pc,
+        args.localStream,
+        monitorRef.current?.tier ?? TIER_HD,
+        wantCamRef.current,
+        track,
+      );
+      // "Parar compartilhamento" do próprio navegador encerra o track.
+      track.addEventListener("ended", () => {
+        if (screenTrackRef.current === track) stopScreenShare();
+      });
+      setLocalScreenStream(stream);
+      return true;
+    },
+    [args.localStream, stopScreenShare],
+  );
+  const startScreenShareRef = useRef(startScreenShare);
+  const stopScreenShareRef = useRef(stopScreenShare);
+  startScreenShareRef.current = startScreenShare;
+  stopScreenShareRef.current = stopScreenShare;
 
   const sendChat = useCallback((raw: string): boolean => {
     const text = sanitizeChatText(raw);
@@ -601,6 +798,11 @@ export function useWebRTCCall(args: UseWebRTCCallArgs): UseWebRTCCallResult {
     localReport,
     chat,
     sendChat,
+    screenShareSupported,
+    localScreenStream,
+    remoteScreenStream,
+    startScreenShare,
+    stopScreenShare,
     remoteTier: isQualityTier(remoteMedia.tier)
       ? remoteMedia.tier
       : remoteMedia.fallback

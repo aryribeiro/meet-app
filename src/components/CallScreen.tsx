@@ -155,6 +155,33 @@ function MediaTile({
   );
 }
 
+/** Tela compartilhada (local ou remota): grande, sem espelho, sem corte (texto!). */
+function ScreenTile({
+  stream,
+  label,
+  tile,
+  muted,
+}: {
+  stream: MediaStream;
+  label: string;
+  tile: "screen-local" | "screen-remote";
+  muted: boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.srcObject = stream;
+  }, [stream]);
+  return (
+    <div
+      data-tile={tile}
+      className="relative isolate aspect-video w-full overflow-hidden rounded-xl bg-black ring-1 ring-[color:var(--color-brand)]"
+    >
+      <video ref={videoRef} autoPlay playsInline muted={muted} className="h-full w-full rounded-xl object-contain" />
+      <div className="absolute bottom-2 left-2 rounded-lg bg-black/60 px-3 py-1 text-sm">🖥️ {label}</div>
+    </div>
+  );
+}
+
 /** Texto honesto da faixa de qualidade, pelo pior degrau entre os dois lados. */
 function qualityNotice(localTier: QualityTier, remoteTier: QualityTier): string | null {
   const worst = Math.max(localTier, remoteTier) as QualityTier;
@@ -307,6 +334,8 @@ export function CallScreen({
   const localShowsVideo = call.camOn && !call.localFallback;
 
   const stateLabel = STATE_LABEL[call.state] ?? null;
+  const presenting = !waiting && (call.localScreenStream !== null || call.remoteScreenStream !== null);
+  const sharing = call.localScreenStream !== null;
 
   return (
     <div className="flex min-h-dvh flex-col gap-3 p-3">
@@ -362,10 +391,37 @@ export function CallScreen({
         )}
       </div>
 
-      {/* Palco 50/50: local à esquerda, remoto à direita; empilha em telas estreitas */}
+      {/* Modo apresentação (estilo Meet): tela(s) grande(s) em cima, câmeras numa
+          fileira menor embaixo. Parar devolve o palco 50/50 aprovado. */}
+      {presenting && (
+        <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-3" data-screens>
+          {call.remoteScreenStream && (
+            <ScreenTile
+              stream={call.remoteScreenStream}
+              label={`Tela de ${call.remoteProfile.name}`}
+              tile="screen-remote"
+              muted={!call.speakerOn}
+            />
+          )}
+          {call.localScreenStream && (
+            <ScreenTile
+              stream={call.localScreenStream}
+              label="Sua tela (o que o outro vê)"
+              tile="screen-local"
+              muted
+            />
+          )}
+        </div>
+      )}
+
+      {/* Palco 50/50: local à esquerda, remoto à direita; empilha em telas estreitas.
+          Em apresentação, vira a fileira pequena de câmeras. */}
       <section
         data-stage
-        className="mx-auto grid w-full max-w-[1280px] grid-cols-1 gap-3 sm:grid-cols-2"
+        data-stage-mode={presenting ? "present" : "split"}
+        className={`mx-auto grid w-full grid-cols-1 gap-3 sm:grid-cols-2 ${
+          presenting ? "max-w-[640px]" : "max-w-[1280px]"
+        }`}
       >
         {/* Local (sempre muted: nunca ouvir a si mesmo) */}
         <MediaTile
@@ -465,6 +521,18 @@ export function CallScreen({
         >
           ⚙️
         </ControlButton>
+        {call.screenShareSupported && (
+          <ControlButton
+            active={!sharing}
+            onClick={() => {
+              if (sharing) call.stopScreenShare();
+              else void call.startScreenShare();
+            }}
+            title={sharing ? "Parar de apresentar" : "Apresentar minha tela"}
+          >
+            🖥️
+          </ControlButton>
+        )}
         <div className="relative">
           <ControlButton
             active
